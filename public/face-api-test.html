@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Face-API.js Test</title>
+  <script src="/face-api.min.js"></script>
+  <style>
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: Arial, sans-serif;
+      background-color: #f0f2f5;
+    }
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+      background-color: white;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    }
+    h1 {
+      color: #4a5568;
+    }
+    .video-container {
+      position: relative;
+      margin-top: 20px;
+    }
+    video, canvas {
+      width: 100%;
+      max-width: 640px;
+      border-radius: 8px;
+    }
+    canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+    }
+    .status {
+      margin-top: 20px;
+      padding: 10px;
+      border-radius: 4px;
+    }
+    .success {
+      background-color: #d4edda;
+      color: #155724;
+    }
+    .error {
+      background-color: #f8d7da;
+      color: #721c24;
+    }
+    .loading {
+      background-color: #fff3cd;
+      color: #856404;
+    }
+    button {
+      margin-top: 20px;
+      padding: 10px 15px;
+      background-color: #4299e1;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    button:hover {
+      background-color: #3182ce;
+    }
+    pre {
+      background-color: #f8f9fa;
+      padding: 10px;
+      border-radius: 4px;
+      overflow-x: auto;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Face-API.js Test Page</h1>
+    
+    <div id="status" class="status loading">
+      Loading Face-API.js...
+    </div>
+    
+    <button id="startButton">Start Camera</button>
+    
+    <div class="video-container">
+      <video id="video" autoplay muted playsinline></video>
+      <canvas id="canvas"></canvas>
+    </div>
+    
+    <h2>Detection Results:</h2>
+    <pre id="results">No results yet</pre>
+  </div>
+
+  <script>
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const status = document.getElementById('status');
+    const startButton = document.getElementById('startButton');
+    const resultsElement = document.getElementById('results');
+    
+    // Check if Face-API is loaded
+    function checkFaceApi() {
+      if (window.faceapi) {
+        status.textContent = 'Face-API.js loaded successfully!';
+        status.className = 'status success';
+        return true;
+      } else {
+        status.textContent = 'Error: Face-API.js not loaded. Please check console.';
+        status.className = 'status error';
+        return false;
+      }
+    }
+    
+    // Load models
+    async function loadModels() {
+      try {
+        status.textContent = 'Loading Face-API models...';
+        status.className = 'status loading';
+        
+        await Promise.all([
+          faceapi.nets.tinyFaceDetector.loadFromUri('/models'),
+          faceapi.nets.faceLandmark68Net.loadFromUri('/models'),
+          faceapi.nets.faceRecognitionNet.loadFromUri('/models'),
+          faceapi.nets.faceExpressionNet.loadFromUri('/models'),
+          faceapi.nets.ageGenderNet.loadFromUri('/models'),
+        ]);
+        
+        status.textContent = 'Models loaded successfully!';
+        status.className = 'status success';
+        return true;
+      } catch (error) {
+        console.error('Error loading models:', error);
+        status.textContent = 'Error loading models. Check console for details.';
+        status.className = 'status error';
+        return false;
+      }
+    }
+    
+    // Start webcam
+    async function startWebcam() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: 640, height: 480 }
+        });
+        
+        video.srcObject = stream;
+        
+        // Set canvas size to match video
+        video.addEventListener('loadedmetadata', () => {
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+        });
+        
+        return true;
+      } catch (error) {
+        console.error('Error accessing webcam:', error);
+        status.textContent = 'Error accessing webcam: ' + error.message;
+        status.className = 'status error';
+        return false;
+      }
+    }
+    
+    // Start face detection
+    function startDetection() {
+      const detectInterval = setInterval(async () => {
+        if (video.paused || video.ended) return;
+        
+        try {
+          // Detect faces
+          const detections = await faceapi
+            .detectAllFaces(video, new faceapi.TinyFaceDetectorOptions())
+            .withFaceLandmarks()
+            .withFaceExpressions()
+            .withAgeAndGender();
+          
+          // Clear canvas
+          const ctx = canvas.getContext('2d');
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          
+          // Resize results
+          const displaySize = { width: video.videoWidth, height: video.videoHeight };
+          const resizedDetections = faceapi.resizeResults(detections, displaySize);
+          
+          // Draw results
+          faceapi.draw.drawDetections(canvas, resizedDetections);
+          faceapi.draw.drawFaceLandmarks(canvas, resizedDetections);
+          faceapi.draw.drawFaceExpressions(canvas, resizedDetections);
+          
+          // Add age and gender
+          resizedDetections.forEach(detection => {
+            const box = detection.detection.box;
+            const drawBox = new faceapi.draw.DrawBox(box, {
+              label: Math.round(detection.age) + " years " + detection.gender
+            });
+            drawBox.draw(canvas);
+          });
+          
+          // Update results
+          if (resizedDetections.length > 0) {
+            const detection = resizedDetections[0];
+            resultsElement.textContent = JSON.stringify({
+              expressions: detection.expressions,
+              age: Math.round(detection.age),
+              gender: detection.gender
+            }, null, 2);
+          } else {
+            resultsElement.textContent = 'No face detected';
+          }
+        } catch (error) {
+          console.error('Detection error:', error);
+        }
+      }, 100);
+    }
+    
+    // Initialize
+    window.addEventListener('DOMContentLoaded', async () => {
+      setTimeout(async () => {
+        if (checkFaceApi()) {
+          await loadModels();
+        }
+      }, 500);
+    });
+    
+    // Start button click handler
+    startButton.addEventListener('click', async () => {
+      if (await startWebcam()) {
+        video.addEventListener('play', startDetection);
+      }
+    });
+  </script>
+</body>
+</html> 

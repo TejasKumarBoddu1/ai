@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" href="/favicon.ico" />
+  <!-- Load Face-API.js directly -->
+  <script src="/face-api/face-api.min.js"></script>
+  <!-- Load models preload script -->
+  <script>
+    window.addEventListener('DOMContentLoaded', async function() {
+      try {
+        if (window.faceapi) {
+          console.log('Preloading Face-API models...');
+          await Promise.all([
+            window.faceapi.nets.tinyFaceDetector.loadFromUri('/face-api/models'),
+            window.faceapi.nets.faceLandmark68Net.loadFromUri('/face-api/models'),
+            window.faceapi.nets.faceRecognitionNet.loadFromUri('/face-api/models'),
+            window.faceapi.nets.faceExpressionNet.loadFromUri('/face-api/models'),
+            window.faceapi.nets.ageGenderNet.loadFromUri('/face-api/models')
+          ]);
+          console.log('Face-API models preloaded successfully');
+        }
+      } catch (error) {
+        console.error('Error preloading Face-API models:', error);
+      }
+    });
+  </script>
+  <title>QwikZen - AI-Powered Career Platform</title>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="module" src="/src/main.tsx"></script>
+</body>
+</html> 

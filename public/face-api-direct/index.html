@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- Add hardware acceleration meta tag for better performance -->
+  <meta http-equiv="x-ua-compatible" content="ie=edge">
+  <meta name="renderer" content="webkit|ie-comp|ie-stand">
+  <title>Face-API Direct Implementation</title>
+  <script src="face-api.min.js"></script>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <video id="video" autoplay muted playsinline></video>
+  </div>
+  
+  <script>
+    const video = document.getElementById("video");
+    const isEmbedded = window.parent !== window;
+    
+    // Hide UI elements if embedded
+    if (isEmbedded) {
+      document.body.classList.add('embedded');
+    }
+    
+    // Load models and start webcam
+    Promise.all([
+      faceapi.nets.tinyFaceDetector.loadFromUri("models"),
+      faceapi.nets.faceLandmark68Net.loadFromUri("models"),
+      faceapi.nets.faceExpressionNet.loadFromUri("models"),
+      faceapi.nets.ageGenderNet.loadFromUri("models"),
+    ])
+    .then(() => {
+      startWebcam();
+    })
+    .catch(error => {
+      console.error("Error loading models:", error);
+    });
+    
+    // Start webcam
+    function startWebcam() {
+      navigator.mediaDevices
+        .getUserMedia({
+          video: {
+            width: { ideal: 640 },
+            height: { ideal: 480 },
+            facingMode: "user"
+          },
+          audio: false,
+        })
+        .then((stream) => {
+          video.srcObject = stream;
+        })
+        .catch((error) => {
+          console.error("Error accessing webcam:", error);
+        });
+    }
+    
+    // Setup face detection when video plays
+    video.addEventListener("play", () => {
+      // Create canvas
+      const canvas = faceapi.createCanvasFromMedia(video);
+      document.querySelector('.container').appendChild(canvas);
+      
+      // Update canvas dimensions to match video
+      const updateCanvasSize = () => {
+        const displaySize = { 
+          width: video.offsetWidth, 
+          height: video.offsetHeight 
+        };
+        canvas.width = displaySize.width;
+        canvas.height = displaySize.height;
+        faceapi.matchDimensions(canvas, displaySize);
+      };
+      
+      // Initial size setup
+      updateCanvasSize();
+      
+      // Update size on window resize with debounce
+      let resizeTimeout;
+      window.addEventListener('resize', () => {
+        clearTimeout(resizeTimeout);
+        resizeTimeout = setTimeout(updateCanvasSize, 200);
+      });
+      
+      // Performance optimization variables
+      let lastDetections = null;
+      let frameCounter = 0;
+      let lastFrameTime = 0;
+      const targetFPS = 15; // Lower FPS for better performance
+      const frameInterval = 1000 / targetFPS;
+      
+      // Detect faces using requestAnimationFrame for better performance
+      function detectFaces(timestamp) {
+        // Throttle frame rate for better performance
+        if (timestamp - lastFrameTime < frameInterval) {
+          requestAnimationFrame(detectFaces);
+          return;
+        }
+        
+        lastFrameTime = timestamp;
+        frameCounter++;
+        
+        // Only run full detection every 3 frames
+        const shouldRunDetection = frameCounter % 3 === 0;
+        
+        // Run detection asynchronously
+        if (shouldRunDetection) {
+          faceapi
+            .detectAllFaces(
+              video, 
+              new faceapi.TinyFaceDetectorOptions({
+                inputSize: 320, // Smaller input size for better performance
+                scoreThreshold: 0.5 // Higher threshold for better accuracy
+              })
+            )
+            .withFaceExpressions()
+            .withAgeAndGender()
+            .then(detections => {
+              // Store detections if found
+              if (detections && detections.length > 0) {
+                lastDetections = detections;
+                
+                // Clear canvas
+                canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
+                
+                // Get current display size
+                const displaySize = { 
+                  width: video.offsetWidth, 
+                  height: video.offsetHeight 
+                };
+                
+                // Resize results
+                const resizedDetections = faceapi.resizeResults(detections, displaySize);
+                
+                // Draw results
+                faceapi.draw.drawDetections(canvas, resizedDetections);
+                faceapi.draw.drawFaceExpressions(canvas, resizedDetections);
+                
+                // Add age and gender labels
+                resizedDetections.forEach((detection) => {
+                  const box = detection.detection.box;
+                  const drawBox = new faceapi.draw.DrawBox(box, {
+                    label: Math.round(detection.age) + " years, " + detection.gender
+                  });
+                  drawBox.draw(canvas);
+                });
+                
+                // Send data to parent window if embedded
+                if (isEmbedded) {
+                  const detection = resizedDetections[0];
+                  const expressions = detection.expressions;
+                  
+                  // Find dominant emotion
+                  const emotionEntries = Object.entries(expressions);
+                  const [dominantEmotion, confidence] = emotionEntries.reduce((max, current) => 
+                    current[1] > max[1] ? current : max
+                  );
+                  
+                  const emotionIcons = {
+                    happy: '😊',
+                    sad: '😢',
+                    surprised: '😮',
+                    neutral: '😐',
+                    disgusted: '🤢',
+                    angry: '😠',
+                    fearful: '😨'
+                  };
+                  
+                  // Send to parent
+                  try {
+                    window.parent.postMessage({
+                      type: 'FACE_API_EMOTION',
+                      emotions: {
+                        dominant: dominantEmotion,
+                        confidence: confidence,
+                        scores: {
+                          happy: expressions.happy || 0,
+                          sad: expressions.sad || 0,
+                          surprised: expressions.surprised || 0,
+                          neutral: expressions.neutral || 0,
+                          disgusted: expressions.disgusted || 0,
+                          angry: expressions.angry || 0,
+                          fearful: expressions.fearful || 0
+                        },
+                        icon: emotionIcons[dominantEmotion] || '😐',
+                        age: detection.age,
+                        gender: detection.gender
+                      }
+                    }, '*');
+                  } catch (e) {
+                    console.error('Error sending data to parent:', e);
+                  }
+                }
+              }
+            })
+            .catch(error => {
+              console.error("Detection error:", error);
+            });
+        }
+        
+        // Continue detection loop
+        requestAnimationFrame(detectFaces);
+      }
+      
+      // Start detection loop
+      requestAnimationFrame(detectFaces);
+    });
+  </script>
+</body>
+</html>
