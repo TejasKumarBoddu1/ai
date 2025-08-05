@@ -65,9 +65,13 @@ export class EnhancedMicrophoneManager {
   private speechDetectionTimeout: NodeJS.Timeout | null = null;
   private adaptiveLanguageDetection = true;
   
-  // Enhanced TTS coordination
+  // Enhanced TTS coordination - FIXED: Reduced delay to allow hearing Ava's voice
   private speechEndTimeout: NodeJS.Timeout | null = null;
-  private speechEndDelayMs = 2000; // Wait 2 seconds after TTS ends before resuming mic
+  private speechEndDelayMs = 1000; // Reduced from 2000ms to 1000ms for better user experience
+  
+  // Typing detection to prevent speech recognition during typing
+  private isTyping = false;
+  private typingTimeout: NodeJS.Timeout | null = null;
 
   constructor(
     private config: GoogleSpeechConfig = {},
@@ -97,8 +101,8 @@ export class EnhancedMicrophoneManager {
   }
 
   async startRecording(): Promise<void> {
-    if (this.isRecording || this.isMutedDuringAIResponse || this.isAISpeaking) {
-      console.log('🎤 Microphone blocked - AI is speaking or already recording');
+    if (this.isRecording || this.isMutedDuringAIResponse) {
+      console.log('🎤 Microphone blocked - already recording or muted for AI response');
       return;
     }
 
@@ -241,8 +245,8 @@ export class EnhancedMicrophoneManager {
     };
 
     this.recognition.onresult = (event) => {
-      if (this.isAISpeaking || this.isMutedDuringAIResponse) {
-        console.log('🔇 Ignoring speech result - AI is speaking');
+      if (this.isAISpeaking || this.isMutedDuringAIResponse || this.isTyping) {
+        console.log('🔇 Ignoring speech result - AI is speaking or user is typing');
         return;
       }
 
@@ -250,13 +254,27 @@ export class EnhancedMicrophoneManager {
       const latestResult = results[results.length - 1];
       
       if (latestResult && latestResult[0].confidence > this.confidenceThreshold) {
+        const transcript = latestResult[0].transcript.trim();
+        
+        // Filter out repetitive or invalid transcripts
+        if (this.isRepetitiveTranscript(transcript)) {
+          console.log('🔇 Ignoring repetitive transcript:', transcript);
+          return;
+        }
+        
+        // Filter out very short or noise-like transcripts
+        if (transcript.length < 3 || this.isNoiseTranscript(transcript)) {
+          console.log('🔇 Ignoring noise transcript:', transcript);
+          return;
+        }
+        
         const alternatives = Array.from(latestResult).map(alt => ({
           transcript: alt.transcript,
           confidence: alt.confidence || 0.8
         }));
 
         this.onTranscript?.({
-          transcript: latestResult[0].transcript,
+          transcript: transcript,
           confidence: latestResult[0].confidence || 0.8,
           isFinal: latestResult.isFinal,
           alternatives: alternatives.slice(0, this.config.maxAlternatives || 3),
@@ -287,7 +305,7 @@ export class EnhancedMicrophoneManager {
           } catch (error) {
             console.error('Failed to restart recognition:', error);
           }
-        }, 300);
+        }, 1000); // Increased delay to prevent rapid restarts
       }
     };
 
@@ -454,15 +472,29 @@ export class EnhancedMicrophoneManager {
     }
   }
 
+  // FIXED: Don't mute microphone during AI response - just pause recognition temporarily
   muteForAIResponse(): void {
-    console.log('🔇 Muting microphone for AI response');
+    console.log('🔇 Pausing microphone recognition for AI response (but keeping mic active)');
     this.isMutedDuringAIResponse = true;
     this.isAISpeaking = true;
-    this.stopRecording();
+    
+    // Only stop the recognition, not the entire microphone stream
+    if (this.recognition) {
+      try {
+        this.recognition.stop();
+      } catch (error) {
+        console.error('Error stopping recognition:', error);
+      }
+    }
+    
+    if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
+      this.mediaRecorder.stop();
+    }
   }
 
+  // FIXED: Resume recognition after AI response with shorter delay
   resumeAfterAIResponse(): void {
-    console.log('🎤 Resuming microphone after AI response');
+    console.log('🎤 Resuming microphone recognition after AI response');
     this.isMutedDuringAIResponse = false;
     this.isAISpeaking = false;
     
@@ -471,7 +503,7 @@ export class EnhancedMicrophoneManager {
       clearTimeout(this.speechEndTimeout);
     }
     
-    // Wait for enhanced delay before resuming microphone
+    // Shorter delay before resuming microphone recognition
     this.speechEndTimeout = setTimeout(() => {
       if (!this.isRecording && !this.isAISpeaking && !this.isMutedDuringAIResponse) {
         console.log('🎤 Actually starting enhanced microphone recording after delay');
@@ -480,23 +512,35 @@ export class EnhancedMicrophoneManager {
     }, this.speechEndDelayMs);
   }
 
+  // FIXED: Better coordination between AI speaking and microphone
   setAISpeakingState(isSpeaking: boolean): void {
     this.isAISpeaking = isSpeaking;
     if (isSpeaking) {
-      console.log('🤖 AI started speaking - muting microphone');
-      this.stopRecording();
+      console.log('🤖 AI started speaking - pausing microphone recognition');
+      // Don't stop the microphone stream, just pause recognition
+      if (this.recognition) {
+        try {
+          this.recognition.stop();
+        } catch (error) {
+          console.error('Error stopping recognition:', error);
+        }
+      }
+      
+      if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
+        this.mediaRecorder.stop();
+      }
     } else {
-      console.log('🤖 AI finished speaking - scheduling microphone resume');
+      console.log('🤖 AI finished speaking - scheduling microphone recognition resume');
       
       // Clear any existing timeout
       if (this.speechEndTimeout) {
         clearTimeout(this.speechEndTimeout);
       }
       
-      // Enhanced delay before resuming microphone to prevent interruption
+      // Shorter delay before resuming microphone recognition
       this.speechEndTimeout = setTimeout(() => {
         if (!this.isMutedDuringAIResponse) {
-          console.log('🎤 Resuming microphone after AI speech completion');
+          console.log('🎤 Resuming microphone recognition after AI speech completion');
           this.startRecording();
         }
       }, this.speechEndDelayMs);
@@ -524,9 +568,77 @@ export class EnhancedMicrophoneManager {
   toggleAdaptiveLanguageDetection(enabled: boolean): void {
     this.adaptiveLanguageDetection = enabled;
   }
+  
+  // Temporarily disable speech recognition when typing is detected
+  setTypingState(isTyping: boolean): void {
+    this.isTyping = isTyping;
+    
+    if (this.typingTimeout) {
+      clearTimeout(this.typingTimeout);
+    }
+    
+    if (isTyping) {
+      // Disable speech recognition immediately when typing starts
+      if (this.recognition && this.isRecording) {
+        try {
+          this.recognition.stop();
+        } catch (error) {
+          console.error('Failed to stop recognition during typing:', error);
+        }
+      }
+    } else {
+      // Re-enable speech recognition after typing stops (with delay)
+      this.typingTimeout = setTimeout(() => {
+        if (!this.isAISpeaking && !this.isMutedDuringAIResponse) {
+          try {
+            if (this.recognition && !this.isRecording) {
+              this.recognition.start();
+            }
+          } catch (error) {
+            console.error('Failed to restart recognition after typing:', error);
+          }
+        }
+      }, 2000); // Wait 2 seconds after typing stops
+    }
+  }
 
   setSpeechEndDelay(delayMs: number): void {
-    this.speechEndDelayMs = Math.max(1000, Math.min(5000, delayMs));
+    this.speechEndDelayMs = Math.max(500, Math.min(3000, delayMs)); // Reduced range for better UX
+  }
+  
+  // Filter out repetitive transcripts
+  private isRepetitiveTranscript(transcript: string): boolean {
+    const words = transcript.toLowerCase().split(/\s+/);
+    if (words.length < 3) return false;
+    
+    // Check for repeated phrases
+    const phrase = words.slice(0, 3).join(' ');
+    const remainingWords = words.slice(3);
+    
+    for (let i = 0; i < remainingWords.length - 2; i++) {
+      const checkPhrase = remainingWords.slice(i, i + 3).join(' ');
+      if (checkPhrase === phrase) {
+        return true; // Found repetition
+      }
+    }
+    
+    return false;
+  }
+  
+  // Filter out noise-like transcripts
+  private isNoiseTranscript(transcript: string): boolean {
+    const lowerTranscript = transcript.toLowerCase();
+    
+    // Common noise patterns
+    const noisePatterns = [
+      /^[aeiou]+$/i, // Only vowels
+      /^[bcdfghjklmnpqrstvwxyz]+$/i, // Only consonants
+      /^(.)\1{2,}$/, // Repeated single character
+      /^[^a-zA-Z\s]+$/, // No letters, only symbols/numbers
+      /^(um|uh|ah|er|hmm|mmm|aaa|eee|ooo|iii|uuu)+$/i, // Filler sounds
+    ];
+    
+    return noisePatterns.some(pattern => pattern.test(lowerTranscript));
   }
 }
 
@@ -540,6 +652,8 @@ export class EnhancedTextToSpeech {
   private isSpeaking = false;
   private speechEndTimeout: NodeJS.Timeout | null = null;
   private preferredVoice: string | null = null;
+  private speechQueue: string[] = [];
+  private isProcessingSpeechQueue = false;
 
   constructor(
     private config: GoogleSpeechConfig = {},
@@ -631,30 +745,88 @@ export class EnhancedTextToSpeech {
   }
 
   async speak(text: string, options: TTSOptions = {}): Promise<void> {
-    this.stop();
+    // Add to speech queue
+    this.speechQueue.push(text);
+    
+    // If already processing queue, just add to it
+    if (this.isProcessingSpeechQueue) {
+      console.log('🗣️ Added to speech queue, will process when current speech finishes');
+      return;
+    }
+    
+    // Start processing the queue
+    this.processSpeechQueue(options);
+  }
+  
+  private async processSpeechQueue(options: TTSOptions = {}): Promise<void> {
+    if (this.isProcessingSpeechQueue || this.speechQueue.length === 0) {
+      return;
+    }
+    
+    this.isProcessingSpeechQueue = true;
+    
+    while (this.speechQueue.length > 0) {
+      const text = this.speechQueue.shift()!;
+      
+      console.log('🗣️ Processing speech from queue:', text.substring(0, 50) + '...');
+      this.isSpeaking = true;
+      
+      // Ensure we have a female voice
+      if (this.preferredVoice && !options.voice) {
+        options.voice = this.preferredVoice;
+        console.log(`Using preferred female voice: ${this.preferredVoice}`);
+      }
+      
+      // Always set female gender
+      options.voiceGender = 'FEMALE';
+      
+      // Adjust pitch for female voice if not set
+      if (!options.pitch) {
+        options.pitch = 0.5;
+      }
 
-    console.log('🗣️ AI starting enhanced speech:', text.substring(0, 50) + '...');
-    this.isSpeaking = true;
-    
-    // Ensure we have a female voice
-    if (this.preferredVoice && !options.voice) {
-      options.voice = this.preferredVoice;
-      console.log(`Using preferred female voice: ${this.preferredVoice}`);
-    }
-    
-    // Always set female gender
-    options.voiceGender = 'FEMALE';
-    
-    // Adjust pitch for female voice if not set
-    if (!options.pitch) {
-      options.pitch = 0.5;
-    }
+      // Add retry mechanism for interrupted speech
+      const maxRetries = 2;
+      let retryCount = 0;
 
-    if (this.config.apiKey) {
-      await this.speakWithEnhancedGoogleTTS(text, options);
-    } else {
-      this.speakWithEnhancedWebAPI(text, options);
+      const attemptSpeech = async () => {
+        try {
+          if (this.config.apiKey) {
+            await this.speakWithEnhancedGoogleTTS(text, options);
+          } else {
+            this.speakWithEnhancedWebAPI(text, options);
+          }
+        } catch (error) {
+          console.error('Speech error, attempting retry:', error);
+          if (retryCount < maxRetries) {
+            retryCount++;
+            setTimeout(() => {
+              attemptSpeech();
+            }, 1000); // Wait 1 second before retry
+          } else {
+            console.error('Speech failed after all retries');
+            this.isSpeaking = false;
+            this.onSpeechEnd?.();
+          }
+        }
+      };
+
+      await attemptSpeech();
+      
+      // Wait for speech to finish before processing next
+      await new Promise(resolve => {
+        const checkSpeaking = () => {
+          if (!this.isSpeaking) {
+            resolve(undefined);
+          } else {
+            setTimeout(checkSpeaking, 100);
+          }
+        };
+        checkSpeaking();
+      });
     }
+    
+    this.isProcessingSpeechQueue = false;
   }
 
   private async speakWithEnhancedGoogleTTS(text: string, options: TTSOptions): Promise<void> {
@@ -705,21 +877,38 @@ export class EnhancedTextToSpeech {
     }
   }
 
-  private splitTextIntoChunks(text: string, maxLength: number = 5000): string[] {
+  private splitTextIntoChunks(text: string, maxLength: number = 3000): string[] {
     if (text.length <= maxLength) return [text];
     
     const chunks: string[] = [];
-    const sentences = text.split(/[.!?]+/);
+    // Split by sentences more carefully to avoid breaking mid-sentence
+    const sentences = text.split(/(?<=[.!?])\s+/);
     let currentChunk = '';
     
     for (const sentence of sentences) {
-      if (currentChunk.length + sentence.length > maxLength) {
+      const trimmedSentence = sentence.trim();
+      if (!trimmedSentence) continue;
+      
+      // If adding this sentence would exceed the limit
+      if (currentChunk.length + trimmedSentence.length + 1 > maxLength) {
         if (currentChunk) {
           chunks.push(currentChunk.trim());
           currentChunk = '';
         }
+        // If a single sentence is too long, split it by commas
+        if (trimmedSentence.length > maxLength) {
+          const subSentences = trimmedSentence.split(/(?<=,)\s+/);
+          for (const subSentence of subSentences) {
+            if (subSentence.trim()) {
+              chunks.push(subSentence.trim());
+            }
+          }
+        } else {
+          currentChunk = trimmedSentence;
+        }
+      } else {
+        currentChunk += (currentChunk ? ' ' : '') + trimmedSentence;
       }
-      currentChunk += sentence + '. ';
     }
     
     if (currentChunk) {
@@ -740,24 +929,23 @@ export class EnhancedTextToSpeech {
         
         audio.onplay = () => {
           if (this.audioQueue.indexOf(audio) === 0) {
+            this.isSpeaking = true;
             this.onSpeechStart?.();
           }
         };
         
         audio.onended = () => {
           if (this.audioQueue.indexOf(audio) === this.audioQueue.length - 1) {
-            // Enhanced delay before calling onSpeechEnd
-            this.speechEndTimeout = setTimeout(() => {
-              this.isSpeaking = false;
-              this.onSpeechEnd?.();
-            }, 500); // Half second delay
+            // Immediate callback for better responsiveness
+            this.isSpeaking = false;
+            this.onSpeechEnd?.();
           }
           URL.revokeObjectURL(audio.src);
           resolve();
         };
         
-        audio.onerror = () => {
-          console.error('Audio playback error');
+        audio.onerror = (error) => {
+          console.error('Audio playback error:', error);
           resolve();
         };
         
@@ -774,6 +962,9 @@ export class EnhancedTextToSpeech {
 
   private speakWithEnhancedWebAPI(text: string, options: TTSOptions): void {
     if (typeof window === 'undefined') return;
+
+    // Don't cancel ongoing speech - let it finish naturally
+    // speechSynthesis.cancel();
 
     const utterance = new SpeechSynthesisUtterance(text);
     
@@ -813,25 +1004,34 @@ export class EnhancedTextToSpeech {
       }
     }
     
-    // Use default speech parameters without enhancements
+    // Enhanced speech parameters for better quality
+    utterance.rate = 0.9; // Slightly slower for clarity
+    utterance.pitch = 1.0; // Natural pitch
+    utterance.volume = 0.9; // Good volume level
     utterance.text = text;
     
     utterance.onstart = () => {
+      this.isSpeaking = true;
       this.onSpeechStart?.();
     };
     
     utterance.onend = () => {
-      // Enhanced delay before calling onSpeechEnd
-      this.speechEndTimeout = setTimeout(() => {
-        this.isSpeaking = false;
-        this.onSpeechEnd?.();
-      }, 800); // Increased delay for more natural conversation flow
+      // Immediate callback for better responsiveness
+      this.isSpeaking = false;
+      this.onSpeechEnd?.();
     };
     
     utterance.onerror = (event) => {
       console.error('Speech synthesis error:', event.error);
       this.isSpeaking = false;
       this.onSpeechEnd?.();
+    };
+    
+    // Add boundary event to track progress
+    utterance.onboundary = (event) => {
+      if (event.name === 'word') {
+        // Optional: Add progress tracking here
+      }
     };
     
     speechSynthesis.speak(utterance);
@@ -861,6 +1061,10 @@ export class EnhancedTextToSpeech {
     });
     this.audioQueue = [];
     this.isProcessingQueue = false;
+    
+    // Clear speech queue
+    this.speechQueue = [];
+    this.isProcessingSpeechQueue = false;
     
     if (typeof window !== 'undefined') {
       speechSynthesis.cancel();

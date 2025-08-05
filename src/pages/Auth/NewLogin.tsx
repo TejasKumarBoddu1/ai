@@ -11,6 +11,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { UserRole } from "@/types/auth";
 import { motion, AnimatePresence } from "framer-motion";
 import { Eye, EyeOff, Mail, Lock, User, Building } from 'lucide-react';
+import { getDashboardPath } from "@/utils/navigation";
 
 const NewLogin = () => {
   const [isLoginMode, setIsLoginMode] = useState(true);
@@ -28,7 +29,8 @@ const NewLogin = () => {
 
   useEffect(() => {
     if (isAuthenticated && user) {
-      const dashboardPath = user.role === 'organization' ? '/organization-home' : '/student-home';
+      const dashboardPath = getDashboardPath(user.role);
+      console.log(`NewLogin: Redirecting authenticated user to ${dashboardPath}`);
       navigate(dashboardPath, { replace: true });
     }
   }, [isAuthenticated, user, navigate]);

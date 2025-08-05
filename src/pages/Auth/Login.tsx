@@ -12,6 +12,7 @@ import { UserRole } from "@/types/auth";
 import { motion } from "framer-motion";
 import QwikZenLogo from "@/components/ui/QwikZenLogo";
 import { GraduationCap, Shield } from 'lucide-react';
+import { getDashboardPath } from "@/utils/navigation";
 
 const Login = () => {
   const [email, setEmail] = useState("");
@@ -31,7 +32,7 @@ const Login = () => {
     console.log("Login page - Auth status:", isAuthenticated, user);
     if (isAuthenticated && user) {
       console.log("Login page - Already authenticated, redirecting");
-      const dashboardPath = user.role === 'organization' ? '/organization-home' : '/student-home';
+      const dashboardPath = getDashboardPath(user.role);
       navigate(dashboardPath, { replace: true });
     }
   }, [isAuthenticated, user, navigate]);

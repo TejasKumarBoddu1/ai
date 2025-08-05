@@ -88,7 +88,7 @@
       let lastDetections = null;
       let frameCounter = 0;
       let lastFrameTime = 0;
-      const targetFPS = 15; // Lower FPS for better performance
+      const targetFPS = 30; // Maximum FPS for instant response
       const frameInterval = 1000 / targetFPS;
       
       // Detect faces using requestAnimationFrame for better performance
@@ -102,8 +102,8 @@
         lastFrameTime = timestamp;
         frameCounter++;
         
-        // Only run full detection every 3 frames
-        const shouldRunDetection = frameCounter % 3 === 0;
+        // Run detection every frame for maximum responsiveness
+        const shouldRunDetection = true;
         
         // Run detection asynchronously
         if (shouldRunDetection) {
@@ -134,18 +134,10 @@
                 // Resize results
                 const resizedDetections = faceapi.resizeResults(detections, displaySize);
                 
-                // Draw results
-                faceapi.draw.drawDetections(canvas, resizedDetections);
-                faceapi.draw.drawFaceExpressions(canvas, resizedDetections);
-                
-                // Add age and gender labels
-                resizedDetections.forEach((detection) => {
-                  const box = detection.detection.box;
-                  const drawBox = new faceapi.draw.DrawBox(box, {
-                    label: Math.round(detection.age) + " years, " + detection.gender
-                  });
-                  drawBox.draw(canvas);
-                });
+                // No visual boxes - completely clean display
+                // Just clear the canvas to show only the video
+                const ctx = canvas.getContext("2d");
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
                 
                 // Send data to parent window if embedded
                 if (isEmbedded) {
@@ -170,7 +162,7 @@
                   
                   // Send to parent
                   try {
-                    window.parent.postMessage({
+                    const emotionData = {
                       type: 'FACE_API_EMOTION',
                       emotions: {
                         dominant: dominantEmotion,
@@ -188,7 +180,9 @@
                         age: detection.age,
                         gender: detection.gender
                       }
-                    }, '*');
+                    };
+                    
+                    window.parent.postMessage(emotionData, '*');
                   } catch (e) {
                     console.error('Error sending data to parent:', e);
                   }

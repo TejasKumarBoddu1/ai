@@ -8,8 +8,8 @@ export function speakText(
 ): void {
   if (!text || typeof window === 'undefined') return;
 
-  // Cancel any ongoing speech first
-  window.speechSynthesis.cancel();
+  // Don't cancel ongoing speech - let it finish naturally
+  // window.speechSynthesis.cancel();
 
   const utterance = new SpeechSynthesisUtterance(text);
   

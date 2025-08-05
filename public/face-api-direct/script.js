@@ -14,7 +14,7 @@ function webCam() {
         width: { ideal: 320 }, // Lower resolution for better performance
         height: { ideal: 240 },
         facingMode: "user",
-        frameRate: { ideal: 15 } // Lower framerate for better performance
+        frameRate: { ideal: 10 } // Lower framerate for better performance
       },
       audio: false,
     })
@@ -56,20 +56,22 @@ video.addEventListener("play", () => {
   // Store last detection results for smoother performance
   let lastDetections = null;
   let detectionCounter = 0;
+  let lastEmotionData = null;
+  let emotionUpdateCounter = 0;
 
-  // Detect faces at a lower frequency for better performance
+  // Optimized detection interval - reduced frequency for better performance
   setInterval(async () => {
     try {
       detectionCounter++;
       
-      // Only run full detection every 3 frames for better performance
+      // Only run full detection every 5 frames for better performance
       // Use cached results for intermediate frames
-      if (detectionCounter % 3 === 0) {
-        // Detect faces with all features
+      if (detectionCounter % 5 === 0) {
+        // Detect faces with optimized settings
         const detections = await faceapi
           .detectAllFaces(video, new faceapi.TinyFaceDetectorOptions({
-            inputSize: 320, // Smaller input size for better performance
-            scoreThreshold: 0.5 // Higher threshold to reduce false positives
+            inputSize: 224, // Smaller input size for better performance
+            scoreThreshold: 0.6 // Higher threshold to reduce false positives
           }))
           .withFaceExpressions()
           .withAgeAndGender();
@@ -82,7 +84,10 @@ video.addEventListener("play", () => {
       // Skip rendering if no detections available
       if (!lastDetections) return;
       
-      canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
+      // Clear canvas less frequently for better performance
+      if (detectionCounter % 2 === 0) {
+        canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
+      }
 
       // Get current display size
       const displaySize = { width: video.offsetWidth, height: video.offsetHeight };
@@ -102,31 +107,33 @@ video.addEventListener("play", () => {
         drawBox.draw(canvas);
       });
 
-      // Send emotion data to parent window if in iframe
+      // Send emotion data to parent window if in iframe - optimized frequency
       if (window.parent && window.parent !== window && resizedDetections.length > 0) {
-        const detection = resizedDetections[0];
-        const expressions = detection.expressions;
+        emotionUpdateCounter++;
         
-        // Find dominant emotion
-        const emotionEntries = Object.entries(expressions);
-        const [dominantEmotion, confidence] = emotionEntries.reduce((max, current) => 
-          current[1] > max[1] ? current : max
-        );
+        // Only send emotion data every 3 frames to reduce lag
+        if (emotionUpdateCounter % 3 === 0) {
+          const detection = resizedDetections[0];
+          const expressions = detection.expressions;
+          
+          // Find dominant emotion
+          const emotionEntries = Object.entries(expressions);
+          const [dominantEmotion, confidence] = emotionEntries.reduce((max, current) => 
+            current[1] > max[1] ? current : max
+          );
 
-        const emotionIcons = {
-          happy: '😊',
-          sad: '😢',
-          surprised: '😮',
-          neutral: '😐',
-          disgusted: '🤢',
-          angry: '😠',
-          fearful: '😨'
-        };
+          const emotionIcons = {
+            happy: '😊',
+            sad: '😢',
+            surprised: '😮',
+            neutral: '😐',
+            disgusted: '🤢',
+            angry: '😠',
+            fearful: '😨'
+          };
 
-        // Send to parent
-        window.parent.postMessage({
-          type: 'FACE_API_EMOTION',
-          emotions: {
+          // Create emotion data
+          const emotionData = {
             dominant: dominantEmotion,
             confidence: confidence,
             scores: {
@@ -141,11 +148,25 @@ video.addEventListener("play", () => {
             icon: emotionIcons[dominantEmotion] || '😐',
             age: detection.age,
             gender: detection.gender
+          };
+
+          // Only send if data has changed significantly to reduce unnecessary updates
+          if (!lastEmotionData || 
+              Math.abs(lastEmotionData.confidence - confidence) > 0.1 ||
+              lastEmotionData.dominant !== dominantEmotion) {
+            
+            lastEmotionData = emotionData;
+            
+            // Send to parent
+            window.parent.postMessage({
+              type: 'FACE_API_EMOTION',
+              emotions: emotionData
+            }, '*');
           }
-        }, '*');
+        }
       }
     } catch (error) {
       console.error('Face detection error:', error);
     }
-  }, 100);
+  }, 150); // Increased interval for better performance
 });

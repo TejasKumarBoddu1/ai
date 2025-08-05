@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 
 interface EmbeddedFaceApiCameraProps {
   onEmotionDetected?: (emotions: any) => void;
@@ -8,6 +8,12 @@ const EmbeddedFaceApiCamera: React.FC<EmbeddedFaceApiCameraProps> = ({ onEmotion
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [error, setError] = useState<string | null>(null);
   
+  // Direct emotion handler - no debouncing for instant updates
+  const handleEmotionUpdate = useCallback((emotions: any) => {
+    // Instant update - no delays
+    onEmotionDetected?.(emotions);
+  }, [onEmotionDetected]);
+  
   // Listen for messages from the iframe
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
@@ -15,8 +21,8 @@ const EmbeddedFaceApiCamera: React.FC<EmbeddedFaceApiCameraProps> = ({ onEmotion
       if (event.origin !== window.location.origin) return;
       
       // Process emotion data
-      if (event.data && event.data.type === 'FACE_API_EMOTION' && onEmotionDetected) {
-        onEmotionDetected(event.data.emotions);
+      if (event.data && event.data.type === 'FACE_API_EMOTION' && event.data.emotions) {
+        handleEmotionUpdate(event.data.emotions);
       }
     };
     
@@ -27,7 +33,7 @@ const EmbeddedFaceApiCamera: React.FC<EmbeddedFaceApiCameraProps> = ({ onEmotion
     return () => {
       window.removeEventListener('message', handleMessage);
     };
-  }, [onEmotionDetected]);
+  }, [handleEmotionUpdate]);
 
   // Check if iframe loaded correctly
   useEffect(() => {

@@ -5,6 +5,7 @@ import { User, UserRole } from "@/types/auth";
 import { useToast } from "@/components/ui/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { Session } from "@supabase/supabase-js";
+import { getDashboardPath } from "@/utils/navigation";
 
 interface AuthContextType {
   user: User | null;
@@ -81,16 +82,16 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
                 // Using 'SIGNED_IN' and 'TOKEN_REFRESHED' as these are valid auth event types
                 if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
                   console.log("Signed in event detected, redirecting to dashboard");
-                  let dashboardPath = '/student-home';
+                  const dashboardPath = getDashboardPath(userData.role);
                   
-                  // Determine dashboard path based on user role
-                  if (userData.role === 'organization') {
-                    dashboardPath = '/hr-dashboard';
-                  } else if (userData.role === 'admin') {
-                    dashboardPath = '/everyone'; // Admin users go to Everyone page by default
+                  // Only redirect if we're on auth pages or root
+                  const currentPath = window.location.pathname;
+                  const authPages = ['/login', '/register', '/new-login', '/forgot-password', '/reset-password', '/'];
+                  
+                  if (authPages.includes(currentPath)) {
+                    console.log(`Redirecting from ${currentPath} to ${dashboardPath}`);
+                    navigate(dashboardPath, { replace: true });
                   }
-                  
-                  navigate(dashboardPath, { replace: true });
                 }
               } else {
                 console.error('No profile data found');
@@ -142,17 +143,11 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
               setUser(userData);
               
               // Check if we're on the login page and redirect if needed
-              if (location.pathname === '/login' || location.pathname === '/register') {
+              if (location.pathname === '/login' || location.pathname === '/register' || location.pathname === '/new-login' || location.pathname === '/') {
                 console.log("Already logged in and on login/register page, redirecting to home");
-                let dashboardPath = '/student-home';
+                const dashboardPath = getDashboardPath(userData.role);
                 
-                // Determine dashboard path based on user role
-                if (userData.role === 'organization') {
-                  dashboardPath = '/hr-dashboard';
-                } else if (userData.role === 'admin') {
-                  dashboardPath = '/everyone'; // Admin users go to Everyone page by default
-                }
-                
+                console.log(`Redirecting from ${location.pathname} to ${dashboardPath}`);
                 navigate(dashboardPath, { replace: true });
               }
             } else {
@@ -268,8 +263,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         description: "You have been successfully logged out",
       });
       
-      // Redirect to login page
-      navigate("/login", { replace: true });
+      // Redirect to new login page
+      navigate("/new-login", { replace: true });
     } catch (error) {
       console.error("Logout failed:", error);
       toast({
