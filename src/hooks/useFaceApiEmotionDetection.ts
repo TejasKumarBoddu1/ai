@@ -51,20 +51,18 @@ export const useFaceApiEmotionDetection = (
         const faceapi = (window as any).faceapi;
         if (!faceapi) return false;
         
-        // Check if models are loaded
+        // Check if models are loaded (removed age/gender for performance)
         const tinyFaceDetectorLoaded = faceapi.nets.tinyFaceDetector.isLoaded;
         const faceLandmarkLoaded = faceapi.nets.faceLandmark68Net.isLoaded;
         const faceExpressionLoaded = faceapi.nets.faceExpressionNet.isLoaded;
-        const ageGenderLoaded = faceapi.nets.ageGenderNet.isLoaded;
         
         const allLoaded = tinyFaceDetectorLoaded && faceLandmarkLoaded && 
-                          faceExpressionLoaded && ageGenderLoaded;
+                          faceExpressionLoaded;
         
         console.log('Face-API models loaded status:', {
           tinyFaceDetector: tinyFaceDetectorLoaded,
           faceLandmark: faceLandmarkLoaded,
           faceExpression: faceExpressionLoaded,
-          ageGender: ageGenderLoaded,
           allLoaded
         });
         
@@ -106,7 +104,6 @@ export const useFaceApiEmotionDetection = (
             faceapi.nets.tinyFaceDetector.loadFromUri('/Face-api/models'),
             faceapi.nets.faceLandmark68Net.loadFromUri('/Face-api/models'),
             faceapi.nets.faceExpressionNet.loadFromUri('/Face-api/models'),
-            faceapi.nets.ageGenderNet.loadFromUri('/Face-api/models'),
           ]);
           
           modelsLoadedRef.current = true;
@@ -169,25 +166,24 @@ export const useFaceApiEmotionDetection = (
         frameCounterRef.current++;
         const canvas = canvasRef.current;
         
-        // Only run full detection every 3 frames for better performance
-        if (frameCounterRef.current % 3 === 0) {
+        // Only run full detection every 5 frames for better performance
+        if (frameCounterRef.current % 5 === 0) {
           // Match dimensions
           faceapi.matchDimensions(canvas, {
             width: video.clientWidth,
             height: video.clientHeight
           });
 
-          // Detect all faces with expressions and age/gender
+          // Detect all faces with expressions only (removed age/gender for performance)
           const detections = await faceapi
             .detectAllFaces(
               video, 
               new faceapi.TinyFaceDetectorOptions({
-                inputSize: 320, // Smaller input size for better performance
-                scoreThreshold: 0.5 // Higher threshold for better accuracy
+                inputSize: 224, // Even smaller input size for better performance
+                scoreThreshold: 0.6 // Higher threshold for better accuracy
               })
             )
-            .withFaceExpressions()
-            .withAgeAndGender();
+            .withFaceExpressions();
 
           // Clear the canvas
           const ctx = canvas.getContext('2d');
@@ -221,7 +217,7 @@ export const useFaceApiEmotionDetection = (
               fearful: '😨'
             };
 
-            // Update emotion state
+            // Update emotion state (removed age and gender)
             setEmotionState({
               dominant: dominantEmotion,
               confidence: confidence as number,
@@ -234,9 +230,7 @@ export const useFaceApiEmotionDetection = (
                 angry: expressions.angry || 0,
                 fearful: expressions.fearful || 0
               },
-              icon: emotionIcons[dominantEmotion as string] || '😐',
-              age: detection.age,
-              gender: detection.gender
+              icon: emotionIcons[dominantEmotion as string] || '😐'
             });
           }
         } else if (lastDetectionRef.current) {
@@ -246,9 +240,9 @@ export const useFaceApiEmotionDetection = (
           // This reduces state updates and improves performance
         }
 
-        // Continue detection loop with a slight delay for better performance
+        // Continue detection loop with a longer delay for better performance
         if (isRunningRef.current) {
-          setTimeout(() => requestAnimationFrame(detectEmotions), 16); // ~60fps
+          setTimeout(() => requestAnimationFrame(detectEmotions), 33); // ~30fps for better performance
         }
       } catch (error) {
         console.error('Face-api emotion detection error:', error);

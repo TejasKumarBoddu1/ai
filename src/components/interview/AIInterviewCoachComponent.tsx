@@ -10,24 +10,27 @@ const AIInterviewCoachComponent: React.FC = () => {
   useEffect(() => {
     const checkFaceAPI = async () => {
       try {
-        // Check if Face-API is loaded
-        if ((window as any).faceapi) {
+        const w: any = window as any;
+        if (w.faceapi) {
           console.log('Face-API.js is available');
           
-          // Preload models
-          try {
-            const faceapi = (window as any).faceapi;
-            console.log('Preloading Face-API models...');
-            await Promise.all([
-              faceapi.nets.tinyFaceDetector.loadFromUri('/models'),
-              faceapi.nets.faceLandmark68Net.loadFromUri('/models'),
-              faceapi.nets.faceRecognitionNet.loadFromUri('/models'),
-              faceapi.nets.faceExpressionNet.loadFromUri('/models'),
-              faceapi.nets.ageGenderNet.loadFromUri('/models'),
-            ]);
-            console.log('Face-API models preloaded successfully');
-          } catch (modelError) {
-            console.error('Error preloading Face-API models:', modelError);
+          // Prevent double preloading across components/pages
+          if (!w.__faceModelsPreloaded) {
+            try {
+              const faceapi = w.faceapi;
+              console.log('Preloading Face-API models (once)...');
+              await Promise.all([
+                faceapi.nets.tinyFaceDetector.loadFromUri('/face-api/models'),
+                faceapi.nets.faceLandmark68Net.loadFromUri('/face-api/models'),
+                faceapi.nets.faceRecognitionNet.loadFromUri('/face-api/models'),
+                faceapi.nets.faceExpressionNet.loadFromUri('/face-api/models'),
+                faceapi.nets.ageGenderNet.loadFromUri('/face-api/models'),
+              ]);
+              w.__faceModelsPreloaded = true;
+              console.log('Face-API models preloaded successfully');
+            } catch (modelError) {
+              console.error('Error preloading Face-API models:', modelError);
+            }
           }
         } else {
           console.error('Face-API.js not found! Emotion detection will not work.');

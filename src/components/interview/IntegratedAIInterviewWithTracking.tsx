@@ -9,7 +9,7 @@ import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Mic, MicOff, Play, Clock, User, Briefcase, Bot, Volume2, VolumeX, StopCircle, Camera, Send, Scan, BarChart3, Target, History, Square, FileText, Code, Eye, Brain } from "lucide-react";
+import { Mic, MicOff, Play, Clock, User, Briefcase, Bot, Volume2, VolumeX, StopCircle, Camera, Send, Scan, BarChart3, Target, History, Square, FileText, Code, Eye, Brain, Sparkles, TrendingUp } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { callUnifiedAI, type AIBackend } from '@/utils/ai/unifiedAIService';
 import { EnterpriseSpeechManager, DEFAULT_SPEECH_CONFIG } from '@/utils/enterpriseSpeechSystem';
@@ -29,6 +29,49 @@ import { interviewDataStorage } from '@/utils/interviewDataStorage';
 import InterviewHistory from './InterviewHistory';
 import DocumentSharing from './DocumentSharing';
 import CodeEditor from './CodeEditor';
+import { InterviewUpload } from './InterviewUpload';
+import AvatarStage from './avatar3d/AvatarStage';
+import NewTalkingHeadAvatar from './avatar3d/NewTalkingHeadAvatar';
+
+/**
+ * IMPROVEMENTS MADE TO PHONE DETECTION SYSTEM:
+ * 
+ * 1. ENHANCED WARNING LOGIC:
+ *    - First warning: 10-second delay after phone detection
+ *    - Subsequent warnings: 4-second intervals (with cooldown)
+ *    - Maximum 4 warnings before interview termination
+ *    - Cooldown periods to prevent spam warnings
+ * 
+ * 2. VISUAL INDICATORS:
+ *    - Live Performance container beside AI Avatar (right side)
+ *    - Phone detection status in Live Performance container
+ *    - Phone detection indicator in Object Detection card header
+ *    - Countdown timer for first warning
+ *    - Color-coded warning levels (yellow -> orange -> red)
+ * 
+ * 3. IMPROVED MONITORING:
+ *    - State-based phone detection tracking
+ *    - Proper cleanup and reset functionality
+ *    - Enhanced debugging and logging
+ *    - Performance metrics display
+ * 
+ * 4. USER EXPERIENCE:
+ *    - Clear warning progression (1/4, 2/4, 3/4, 4/4)
+ *    - Real-time status updates
+ *    - Automatic interview termination after 4 warnings
+ *    - Proper state management and cleanup
+ */
+
+// Optional developer params for TTS/voice
+const DEV_TTS_OPTIONS = {
+  temperature: 0.7,
+  voice: 'en-US-JennyNeural',
+  emotion: 'cheerful',
+  max_tokens: 200,
+  rate: 0.95,
+  pitch: 1.0,
+  volume: 0.9
+};
 
 interface Message {
   role: 'hr' | 'candidate';
@@ -51,10 +94,14 @@ const IntegratedAIInterviewWithTracking: React.FC = () => {
   const [isListening, setIsListening] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [visemeHint, setVisemeHint] = useState<string>('');
+  const [reactionTick, setReactionTick] = useState<number>(0);
+  const [speechRecognitionWorking, setSpeechRecognitionWorking] = useState(false);
   const [confidenceScore, setConfidenceScore] = useState(85);
   const [engagementScore, setEngagementScore] = useState(72);
   const [attentivenessScore, setAttentivenessScore] = useState(90);
   const [questionCount, setQuestionCount] = useState(0);
+  const [resumeText, setResumeText] = useState('');
 
   const [showHistory, setShowHistory] = useState(false);
   const [faceApiEmotions, setFaceApiEmotions] = useState<any>({
@@ -168,51 +215,31 @@ const IntegratedAIInterviewWithTracking: React.FC = () => {
 
   // Handle continuous speech without text duplication
   const handleContinuousSpeech = (transcript: string, isFinal: boolean) => {
+    console.log('🎤 Processing speech:', { transcript, isFinal, length: transcript.length });
+    
     // Prevent duplicate processing of the same transcript
     if (transcript === lastProcessedTranscript && isFinal) {
+      console.log('🎤 Skipping duplicate transcript');
       return;
     }
 
     if (isFinal) {
-      // For final results, check if this is actually new content
-      const currentFullText = confirmedResponse + interimResponse;
+      console.log('🎤 Processing final transcript');
       
-      // If the transcript is shorter than what we already have, ignore it
-      if (transcript.length <= currentFullText.length) {
-        setInterimResponse('');
-        setIsContinuousSpeaking(false);
-        return;
-      }
-      
-      // Calculate the new part to add
-      let newPart = transcript;
-      if (currentFullText && transcript.startsWith(currentFullText)) {
-        newPart = transcript.slice(currentFullText.length);
-      } else if (lastTranscriptRef && transcript.startsWith(lastTranscriptRef)) {
-        newPart = transcript.slice(lastTranscriptRef.length);
-      }
-      
-      // Only add if there's actually new content
-      if (newPart.trim()) {
-        setConfirmedResponse(prev => prev + (prev && !prev.endsWith(' ') ? ' ' : '') + newPart.trim());
-      }
-      
-      setLastTranscriptRef(transcript);
+      // For final results, replace the entire confirmed response
+      // This handles long sentences better by not trying to merge partial results
+      setConfirmedResponse(transcript);
       setInterimResponse('');
       setIsContinuousSpeaking(false);
+      setLastTranscriptRef(transcript);
       setLastProcessedTranscript(transcript);
+      
+      console.log('🎤 Final transcript set:', transcript);
     } else {
-      // For interim results, only show the new part
-      const currentFullText = confirmedResponse + interimResponse;
-      let newInterim = transcript;
+      console.log('🎤 Processing interim transcript');
       
-      if (currentFullText && transcript.startsWith(currentFullText)) {
-        newInterim = transcript.slice(currentFullText.length);
-      } else if (lastTranscriptRef && transcript.startsWith(lastTranscriptRef)) {
-        newInterim = transcript.slice(lastTranscriptRef.length);
-      }
-      
-      setInterimResponse(newInterim.trim());
+      // For interim results, show the current progress
+      setInterimResponse(transcript);
       setIsContinuousSpeaking(true);
       
       // Clear existing timeout
@@ -220,13 +247,14 @@ const IntegratedAIInterviewWithTracking: React.FC = () => {
         clearTimeout(speechTimeout);
       }
       
-      // Set new timeout to handle speech pauses
+      // Set new timeout to handle speech pauses (longer for better long sentence support)
       const timeout = setTimeout(() => {
         if (isContinuousSpeaking) {
+          console.log('🎤 Speech pause detected, clearing interim response');
           setInterimResponse('');
           setIsContinuousSpeaking(false);
         }
-      }, 2000); // 2 second pause threshold
+      }, 3000); // 3 second pause threshold for long sentences
       
       setSpeechTimeout(timeout);
     }
@@ -512,37 +540,63 @@ const IntegratedAIInterviewWithTracking: React.FC = () => {
       }
     };
 
+    console.log('🎤 Initializing speech manager with config:', speechConfig);
     speechManagerRef.current = new EnterpriseSpeechManager(speechConfig);
+    console.log('✅ Speech manager initialized successfully');
 
     // Setup event handlers
-    speechManagerRef.current.on('interim_transcript', (result: any) => {
+    speechManagerRef.current.on('interim', (result: any) => {
+      console.log('🎤 Interim transcript:', result.transcript);
+      setSpeechRecognitionWorking(true);
       handleContinuousSpeech(result.transcript, false);
     });
 
-    speechManagerRef.current.on('final_transcript', (result: any) => {
+    speechManagerRef.current.on('final', (result: any) => {
+      console.log('🎤 Final transcript:', result.transcript);
+      setSpeechRecognitionWorking(true);
       handleContinuousSpeech(result.transcript, true);
     });
 
-    speechManagerRef.current.on('stt_error', (error: any) => {
+    speechManagerRef.current.on('error', (error: any) => {
       console.error('STT Error:', error);
-        setIsListening(false);
-        toast({
-          title: "Microphone Error",
-          description: error,
-          variant: "destructive"
-        });
+      setIsListening(false);
+      toast({
+        title: "Microphone Error",
+        description: error,
+        variant: "destructive"
+      });
     });
 
-    speechManagerRef.current.on('ai_speaking_start', () => {
+    speechManagerRef.current.on('speaking_start', () => {
       console.log('🗣️ AI speech started');
-        setIsSpeaking(true);
-      // User controls microphone manually
+      setIsSpeaking(true);
     });
 
-    speechManagerRef.current.on('ai_speaking_end', () => {
+    speechManagerRef.current.on('speaking_end', () => {
       console.log('🗣️ AI speech ended');
-        setIsSpeaking(false);
-      // User controls microphone manually
+      setIsSpeaking(false);
+      // Trigger micro reaction (nod/tilt) on avatar when sentence finishes
+      setReactionTick((v) => v + 1);
+    });
+
+    speechManagerRef.current.on('stt_start', () => {
+      console.log('🎤 Enterprise speech recognition started');
+      setSpeechRecognitionWorking(true);
+    });
+
+    speechManagerRef.current.on('stt_end', () => {
+      console.log('🎤 Enterprise speech recognition ended');
+      setSpeechRecognitionWorking(false);
+    });
+    // Lip-sync boundary events (approximate visemes)
+    speechManagerRef.current.on('tts_boundary', (payload: any) => {
+      console.log('🎯 TTS Boundary event received:', payload);
+      if (payload?.viseme) {
+        console.log('🎭 Setting viseme hint:', payload.viseme);
+        setVisemeHint(payload.viseme);
+      } else {
+        console.log('⚠️ TTS Boundary event missing viseme data:', payload);
+      }
     });
     
     // Force initialization of female voice
@@ -603,6 +657,27 @@ const IntegratedAIInterviewWithTracking: React.FC = () => {
     };
       }, [isInterviewStarted, isInterviewComplete, toast, isLoading]);
 
+  // Function to speak text using the speech manager (which handles avatar lip-sync)
+  const speakText = async (text: string, onStart?: () => void, onEnd?: () => void) => {
+    if (!speechManagerRef.current) {
+      console.warn('Speech manager not available');
+      return;
+    }
+
+    try {
+      // Set speaking state for avatar
+      if (onStart) onStart();
+      
+      // Use speech manager which will trigger avatar lip-sync
+      await speechManagerRef.current.speak(text);
+      
+      if (onEnd) onEnd();
+    } catch (error) {
+      console.error('Error speaking text:', error);
+      if (onEnd) onEnd();
+    }
+  };
+
   // User controls microphone manually - no automatic management
 
   // Check Face-API.js availability
@@ -622,7 +697,6 @@ const IntegratedAIInterviewWithTracking: React.FC = () => {
               faceapi.nets.faceLandmark68Net.loadFromUri('/models'),
               faceapi.nets.faceRecognitionNet.loadFromUri('/models'),
               faceapi.nets.faceExpressionNet.loadFromUri('/models'),
-              faceapi.nets.ageGenderNet.loadFromUri('/models'),
             ]);
             console.log('Face-API models preloaded successfully');
           } catch (modelError) {
@@ -673,6 +747,9 @@ const IntegratedAIInterviewWithTracking: React.FC = () => {
 
   const generateAvaPrompt = (isFirst: boolean, messageHistory: Message[] = []): string => {
     const aiModelName = aiBackend === 'gemini' ? 'Gemini' : aiBackend === 'chatgpt' ? 'ChatGPT' : 'Grok';
+    const hasResume = !!resumeText.trim();
+    const resumeSnippet = hasResume ? resumeText.trim().slice(0, 3000) : '';
+    const remainingResumeVerification = hasResume ? Math.max(0, 3 - questionCount) : 0;
     
     if (isFirst) {
       return `You are Ava Taylor, a warm and charismatic AI HR interviewer powered by ${aiModelName}. You're conducting an interview for the ${jobTitle} position with ${candidateName}. 
@@ -685,7 +762,15 @@ Your personality traits:
 - You use varied language and never sound scripted
 - You show genuine interest with follow-ups like "Oh really? Tell me more about that!" or "That's fascinating, how did you handle that?"
 
-Start with something natural like: "Hi ${candidateName}! I'm Ava, so excited to chat with you today about the ${jobTitle} position. Before we dive into the formal stuff, I'd love to know - what's been the highlight of your week so far?"
+HR interviewing guidelines:
+- Be structured and fair; avoid bias and leading questions
+- Prefer behavioral and situational prompts; use STAR guidance where helpful
+- Probe for impact, scope, collaboration, trade-offs, and measurable outcomes
+- Calibrate difficulty to ${jobTitle} level; mix soft skills, problem-solving, and role-specific depth
+- Keep questions open‑ended, one at a time; ask clear, concise follow‑ups
+- Maintain a supportive, professional tone while staying engaging
+
+${hasResume ? `Candidate resume (for your reference; do not read verbatim):\n${resumeSnippet}\n\nFirst question requirement (resume validation): Start by referencing a concrete item from the resume (a project, achievement, certification, or technology). Ask an open‑ended question that validates the claim by eliciting specifics: context, the candidate's exact role, key decisions/trade‑offs, tools/stack, collaborators/stakeholders, measurable outcomes, and how success was verified (metrics, links, or customer impact). Keep it friendly and concise; one question only.` : `Start with something natural like: "Hi ${candidateName}! I'm Ava, so excited to chat with you today about the ${jobTitle} position. Before we dive into the formal stuff, I'd love to know - what's been the highlight of your week so far?"`}
 
 Remember:
 - This is a FULL ${duration}-minute interview, so pace yourself naturally
@@ -717,6 +802,9 @@ You have ${timeLeft} minutes remaining in this ${duration}-minute interview. Bas
 - Keep the conversation flowing naturally - you're having a real chat, not following a script
 - Use varied language and conversational phrases
 - Show genuine interest and react to what they share
+${hasResume ? '\nReference the resume when relevant to deepen the discussion (projects, achievements, tools), but do not read or quote it verbatim.' : ''}
+
+${remainingResumeVerification > 0 ? `\nResume validation phase (${3 - remainingResumeVerification + 1}-${3} of 3): For the next ${remainingResumeVerification} question${remainingResumeVerification > 1 ? 's' : ''}, prioritize verifying resume claims. Choose a different item each time (skills, projects, certifications, achievements), and ask one focused, open‑ended question that requires concrete evidence: exact role/responsibilities, architecture/approach, key decisions, trade‑offs, teammates/stakeholders, timelines, metrics (before/after), and links or artifacts if available. If something seems inconsistent, politely probe for clarification. Keep tone professional, supportive, and concise. When resume validation completes, continue with normal interview flow.` : ''}
 
 Pacing guidelines:
 - ${timeLeft > 10 ? 'You have plenty of time - explore topics deeply and ask follow-ups' : ''}
@@ -732,41 +820,92 @@ Keep it conversational and natural!`;
   const progressPercentage = isInterviewStarted ? ((duration * 60 - timeRemaining) / (duration * 60)) * 100 : 0;
 
   const toggleListening = () => {
-    if (!speechManagerRef.current) {
+    if (isListening) {
+      console.log('🔇 Manual stop listening');
+      if (speechManagerRef.current) {
+        speechManagerRef.current.stopRecording();
+      }
+      setIsListening(false);
+    } else {
+      console.log('🎤 Manual start listening');
+      
+      // Try enterprise speech manager first
+      if (speechManagerRef.current) {
+        try {
+          speechManagerRef.current.startRecording();
+          setIsListening(true);
+          console.log('✅ Enterprise recording started successfully');
+        } catch (error) {
+          console.error('Enterprise speech failed, trying fallback:', error);
+          startFallbackSpeechRecognition();
+        }
+      } else {
+        console.log('No enterprise speech manager, using fallback');
+        startFallbackSpeechRecognition();
+      }
+    }
+  };
+
+  // Fallback speech recognition using Web Speech API directly
+  const startFallbackSpeechRecognition = () => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
       toast({
         title: "Not Supported",
-        description: "Enterprise speech recognition is not available.",
+        description: "Speech recognition is not supported in this browser.",
         variant: "destructive"
       });
       return;
     }
 
-    if (isSpeaking) {
-      toast({
-        title: "AI is Speaking",
-        description: "Please wait for the AI to finish speaking before using the microphone.",
-        variant: "default"
-      });
-      return;
-    }
+    try {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = 'en-US';
+      recognition.maxAlternatives = 3;
 
-    if (isListening) {
-      console.log('🔇 Manual stop listening');
-      speechManagerRef.current.stopRecording();
-      setIsListening(false);
-    } else {
-      console.log('🎤 Manual start listening');
-      try {
-        speechManagerRef.current.startRecording();
-      setIsListening(true);
-      } catch (error) {
-        console.error('Failed to start recording:', error);
+      recognition.onstart = () => {
+        console.log('🎤 Fallback speech recognition started');
+        setIsListening(true);
+        setSpeechRecognitionWorking(true);
+      };
+
+      recognition.onresult = (event) => {
+        const results = Array.from(event.results);
+        const latestResult = results[results.length - 1];
+        const transcript = latestResult[0].transcript.trim();
+        
+        console.log('🎤 Fallback speech result:', { transcript, isFinal: (latestResult as any).isFinal });
+        setSpeechRecognitionWorking(true);
+        handleContinuousSpeech(transcript, (latestResult as any).isFinal);
+      };
+
+      recognition.onerror = (event) => {
+        console.error('Fallback speech error:', event.error);
+        setIsListening(false);
         toast({
-          title: "Microphone Error",
-          description: "Failed to start microphone. Please try again.",
+          title: "Speech Recognition Error",
+          description: `Error: ${event.error}`,
           variant: "destructive"
         });
-      }
+      };
+
+      recognition.onend = () => {
+        console.log('🎤 Fallback speech recognition ended');
+        setIsListening(false);
+        setSpeechRecognitionWorking(false);
+      };
+
+      recognition.start();
+      console.log('✅ Fallback recording started successfully');
+    } catch (error) {
+      console.error('Failed to start fallback recording:', error);
+      toast({
+        title: "Microphone Error",
+        description: "Failed to start microphone. Please try again.",
+        variant: "destructive"
+      });
     }
   };
 
@@ -788,6 +927,9 @@ Keep it conversational and natural!`;
       return;
     }
 
+    // Reset all previous interview data and memory first
+    resetInterview();
+
     setIsLoading(true);
     setQuestionCount(0);
     conversationHistoryRef.current = '';
@@ -799,6 +941,25 @@ Keep it conversational and natural!`;
       objectViolationCount: 0,
       personDetected: true
     });
+    
+    // Reset phone detection state
+    setPhoneDetectionState({
+      isCurrentlyDetected: false,
+      firstDetectionTime: null,
+      lastWarningTime: 0,
+      warningCount: 0,
+      cooldownActive: false
+    });
+    
+    // Reset phone warning countdown
+    setPhoneWarningCountdown(null);
+    
+    // Reset person detection timeout
+    if (personDetectionTimeout) {
+      clearTimeout(personDetectionTimeout);
+      setPersonDetectionTimeout(null);
+    }
+    setLastPersonDetectionTime(Date.now());
     
     setWarningsIssued({
       faceWarning: false,
@@ -845,8 +1006,8 @@ Keep it conversational and natural!`;
         if (!isMuted && speechManagerRef.current) {
           console.log('🗣️ Starting TTS for interview introduction');
           await speechManagerRef.current.speak(hrResponse, {
-            voice: 'Google UK English Female',
-            voiceGender: 'FEMALE'
+            ...DEV_TTS_OPTIONS,
+            voice: DEV_TTS_OPTIONS.voice
           });
         }
         
@@ -948,8 +1109,8 @@ Keep it conversational and natural!`;
         
         if (!isMuted && speechManagerRef.current) {
           await speechManagerRef.current.speak(hrResponse, {
-            voice: 'Google UK English Female',
-            voiceGender: 'FEMALE'
+            ...DEV_TTS_OPTIONS,
+            voice: DEV_TTS_OPTIONS.voice
           });
         }
         
@@ -1008,8 +1169,8 @@ Keep it conversational and natural!`;
     
     if (!isMuted && speechManagerRef.current) {
       speechManagerRef.current.speak(closingMessage.content, {
-        voice: 'Google UK English Female',
-        voiceGender: 'FEMALE'
+        ...DEV_TTS_OPTIONS,
+        voice: DEV_TTS_OPTIONS.voice
       });
     }
     
@@ -1042,41 +1203,110 @@ Keep it conversational and natural!`;
     conversationHistoryRef.current = '';
     speechManagerRef.current?.stopSpeaking();
     setIsSpeaking(false);
+    setIsListening(false);
+    setSpeechRecognitionWorking(false);
+    
+    // Reset live performance
+    setLivePerformance({
+      confidence: 85,
+      engagement: 72,
+      attentiveness: 90
+    });
+    
+    // Reset face API emotions
+    setFaceApiEmotions({
+      dominant: 'neutral',
+      confidence: 0,
+      scores: {
+        happy: 0,
+        sad: 0,
+        surprised: 0,
+        neutral: 1,
+        disgusted: 0,
+        angry: 0,
+        fearful: 0
+      },
+      icon: '😐'
+    });
+    
+    // Reset object detections
+    setObjectDetections([]);
+    
+    // Reset observation metrics
+    setObservationMetrics(null);
+    
+    // Reset response tracking
+    setLastResponseTime(null);
+    setIsWaitingForResponse(false);
+    
+    // Reset document and code analysis
+    setDocumentAnalysis('');
+    setCodeAnalysis('');
+    
     // Don't automatically stop recording - let user control it
     if (autoSubmitTimeoutRef.current) {
       clearTimeout(autoSubmitTimeoutRef.current);
     }
     
-      // Reset monitoring counts
-  setViolationCounts({
-    faceNotVisibleCount: 0,
-    phoneDetectedCount: 0,
-    objectViolationCount: 0,
-    personDetected: true
-  });
-  
-  setWarningsIssued({
-    faceWarning: false,
-    phoneWarning: false
-  });
-  
-  // Clear warning states
-  setIsWarningActive(false);
-  setWarningMessage('');
-  setIsPausedForWarning(false);
-  setLastSpeakingPosition(0);
-  
-  // Clear warning timeout
-  if (warningTimeout) {
-    clearTimeout(warningTimeout);
-    setWarningTimeout(null);
-  }
-  
-  // Clear current session from local storage
-  if (sessionId) {
-    interviewDataStorage.clearCurrentSession();
-    setSessionId(null);
-  }
+    if (responseTimeout) {
+      clearTimeout(responseTimeout);
+      setResponseTimeout(null);
+    }
+    
+    if (speechTimeout) {
+      clearTimeout(speechTimeout);
+      setSpeechTimeout(null);
+    }
+    
+    // Reset monitoring counts
+    setViolationCounts({
+      faceNotVisibleCount: 0,
+      phoneDetectedCount: 0,
+      objectViolationCount: 0,
+      personDetected: true
+    });
+    
+    setWarningsIssued({
+      faceWarning: false,
+      phoneWarning: false
+    });
+    
+    // Reset phone detection state
+    setPhoneDetectionState({
+      isCurrentlyDetected: false,
+      firstDetectionTime: null,
+      lastWarningTime: 0,
+      warningCount: 0,
+      cooldownActive: false
+    });
+    
+    // Reset phone warning countdown
+    setPhoneWarningCountdown(null);
+    
+    // Clear warning states
+    setIsWarningActive(false);
+    setWarningMessage('');
+    setIsPausedForWarning(false);
+    setLastSpeakingPosition(0);
+    
+    // Clear warning timeout
+    if (warningTimeout) {
+      clearTimeout(warningTimeout);
+      setWarningTimeout(null);
+    }
+    
+    // Clear person detection timeout
+    if (personDetectionTimeout) {
+      clearTimeout(personDetectionTimeout);
+      setPersonDetectionTimeout(null);
+    }
+    setLastPersonDetectionTime(Date.now());
+    
+    // Clear current session from local storage
+    if (sessionId) {
+      interviewDataStorage.clearCurrentSession();
+      setSessionId(null);
+    }
     
     toast({
       title: "Ready for Next Interview",
@@ -1097,6 +1327,18 @@ Keep it conversational and natural!`;
     phoneWarning: false
   });
 
+  // Enhanced phone detection monitoring with timing
+  const [phoneDetectionState, setPhoneDetectionState] = useState({
+    isCurrentlyDetected: false,
+    firstDetectionTime: null as number | null,
+    lastWarningTime: 0,
+    warningCount: 0,
+    cooldownActive: false
+  });
+
+  // Countdown timer for first phone warning
+  const [phoneWarningCountdown, setPhoneWarningCountdown] = useState<number | null>(null);
+
   // State for warning system
   const [isWarningActive, setIsWarningActive] = useState(false);
   const [warningMessage, setWarningMessage] = useState('');
@@ -1113,6 +1355,8 @@ Keep it conversational and natural!`;
       if (emotionStorageTimeoutRef.current) {
         clearTimeout(emotionStorageTimeoutRef.current);
       }
+      // Clear phone warning countdown
+      setPhoneWarningCountdown(null);
     };
   }, [warningTimeout]);
 
@@ -1164,13 +1408,19 @@ Keep it conversational and natural!`;
         }
         break;
       case 'phone':
-        if (!warningsIssued.phoneWarning) {
+        const currentPhoneWarningCount = phoneDetectionState.warningCount + 1;
+        if (currentPhoneWarningCount === 1) {
           message = "⚠️ Phone detected. Please remove your phone from the frame.";
-          voiceMessage = "Kindly remove your phone from the frame. Continued detection will end the interview.";
-          setWarningsIssued(prev => ({ ...prev, phoneWarning: true }));
-        } else {
+          voiceMessage = "Kindly remove your phone from the frame. Continued detection will result in additional warnings.";
+        } else if (currentPhoneWarningCount === 2) {
+          message = "⚠️ Phone still detected. This is your second warning.";
+          voiceMessage = "Your phone is still detected. This is your second warning.";
+        } else if (currentPhoneWarningCount === 3) {
+          message = "⚠️ Phone still detected. This is your third warning.";
+          voiceMessage = "Your phone is still detected. This is your third warning.";
+        } else if (currentPhoneWarningCount === 4) {
           message = "⚠️ Phone still detected. This is your final warning.";
-          voiceMessage = "Your phone is still detected. This is your final warning.";
+          voiceMessage = "Your phone is still detected. This is your final warning. Continued detection will terminate the interview.";
         }
         break;
       case 'object':
@@ -1194,8 +1444,8 @@ Keep it conversational and natural!`;
 
     // Speak warning message
     speechManagerRef.current?.speak(voiceMessage, {
-      voice: 'Google UK English Female',
-      voiceGender: 'FEMALE'
+      ...DEV_TTS_OPTIONS,
+      voice: DEV_TTS_OPTIONS.voice
     });
 
     // After warning is spoken, wait 5 seconds then clear warning
@@ -1221,7 +1471,7 @@ Keep it conversational and natural!`;
     if (!isFaceVisible) {
       setViolationCounts(prev => ({
         ...prev,
-        faceNotVisibleCount: prev.faceNotVisibleCount + 1
+        faceNotVisibleCount: Math.min(2, prev.faceNotVisibleCount + 1)
       }));
       
       // Issue warning on first detection
@@ -1242,81 +1492,167 @@ Keep it conversational and natural!`;
     }
   };
 
-  // Monitor phone detection
+  // Add new state for phone and people detection
+  const [phoneDetectionCount, setPhoneDetectionCount] = useState(0);
+  const [phoneWarningActive, setPhoneWarningActive] = useState(false);
+  const [phoneWarningTimeout, setPhoneWarningTimeout] = useState<NodeJS.Timeout | null>(null);
+  const [phoneStillDetected, setPhoneStillDetected] = useState(false);
+
+  // Phone detection state via ref to avoid re-renders racing
+  const phoneStateRef = useRef<{ count: number; inGrace: boolean; graceTimeout: NodeJS.Timeout | null; lastPresent: boolean }>({
+    count: 0,
+    inGrace: false,
+    graceTimeout: null,
+    lastPresent: false
+  });
+
+  // People detection distinct-event tracking
+  const twoPeopleRef = useRef<{ prevTwoPlus: boolean; events: number }>({ prevTwoPlus: false, events: 0 });
+
+  // Helper to clear phone grace timer
+  const clearPhoneGrace = () => {
+    const s = phoneStateRef.current;
+    if (s.graceTimeout) {
+      clearTimeout(s.graceTimeout);
+      s.graceTimeout = null;
+    }
+  };
+
+  // New phone detection rule: single warning per detection, 5s grace loop, terminate on 3rd
   const monitorPhoneDetection = (isPhoneDetected: boolean) => {
-    if (isPhoneDetected) {
-      setViolationCounts(prev => ({
-        ...prev,
-        phoneDetectedCount: prev.phoneDetectedCount + 1
-      }));
-      
-      // Issue warning on first detection
-      if (violationCounts.phoneDetectedCount === 0) {
+    const s = phoneStateRef.current;
+
+    if (s.inGrace) {
+      // During grace, only record presence; ignore further warnings
+      s.lastPresent = isPhoneDetected;
+      return;
+    }
+
+    if (!isPhoneDetected) {
+      // No phone; if not in grace, keep state calm
+      s.lastPresent = false;
+      return;
+    }
+
+    // New detection event outside grace
+    s.count += 1;
+    s.inGrace = true;
+    s.lastPresent = true;
+    issueWarning('phone');
+
+    // Start 5s grace window
+    clearPhoneGrace();
+    s.graceTimeout = setTimeout(() => {
+      const state = phoneStateRef.current;
+      state.inGrace = false;
+
+      if (state.lastPresent) {
+        // Still detected -> count another detection and warn/terminate
+        state.count += 1;
+        if (state.count >= 3) {
+          clearPhoneGrace();
+          terminateInterview('Phone detected 3 times. Interview terminated.');
+          return;
+        }
+        // Warn again and start another grace cycle
+        state.inGrace = true;
         issueWarning('phone');
+        clearPhoneGrace();
+        state.graceTimeout = setTimeout(() => {
+          const st2 = phoneStateRef.current;
+          st2.inGrace = false;
+          if (st2.lastPresent) {
+            st2.count += 1;
+            if (st2.count >= 3) {
+              clearPhoneGrace();
+              terminateInterview('Phone detected 3 times. Interview terminated.');
+              return;
+            }
+            // If somehow still present, loop again (rare)
+            st2.inGrace = true;
+            issueWarning('phone');
+            clearPhoneGrace();
+            st2.graceTimeout = setTimeout(() => {
+              const st3 = phoneStateRef.current;
+              st3.inGrace = false;
+              if (st3.lastPresent) {
+                st3.count += 1;
+                if (st3.count >= 3) {
+                  clearPhoneGrace();
+                  terminateInterview('Phone detected 3 times. Interview terminated.');
+                  return;
+                }
+              } else {
+                // Removed during this grace
+                st3.count = 0;
+              }
+            }, 5000);
+          } else {
+            // Removed during grace -> reset count
+            st2.count = 0;
+          }
+        }, 5000);
+      } else {
+        // Removed during grace -> reset count completely
+        state.count = 0;
       }
-      
-      // Terminate after 2 violations
-      if (violationCounts.phoneDetectedCount >= 1) {
-        terminateInterview("Phone detected - interview terminated due to repeated violations.");
-      }
-    } else {
-      // Reset count when phone is removed
-      setViolationCounts(prev => ({
-        ...prev,
-        phoneDetectedCount: 0
-      }));
-    }
+    }, 5000);
   };
 
-  // Monitor object detection
+  // Monitor object detection (reverted to previous minimal behavior)
   const monitorObjectDetection = (detectedObjects: any[]) => {
-    const nonPersonObjects = detectedObjects.filter(obj => 
-      obj.class !== 'person' && 
-      obj.class !== 'human' && 
-      obj.class !== 'face' &&
-      obj.class !== 'head' &&
-      obj.score > 0.5 // Only count high-confidence detections
-    );
+    // Only react to phones. Ignore other classes here.
+    const phoneDetected = detectedObjects.some(obj => (
+      obj.class === 'cell phone' || obj.class === 'mobile phone' || obj.class === 'phone' || obj.class === 'smartphone'
+    ) && obj.score > 0.7);
     
-    if (nonPersonObjects.length > 0) {
-      // Only increment if we haven't already counted this violation
-      setViolationCounts(prev => {
-        const newCount = prev.objectViolationCount + 1;
-        
-        // Issue warning on first detection
-        if (prev.objectViolationCount === 0) {
-          issueWarning('object');
-        }
-        
-        // Terminate after 3 object violations
-        if (newCount >= 3) {
-          terminateInterview("Multiple objects detected in frame - interview terminated due to repeated violations.");
-        }
-        
-        return {
-          ...prev,
-          objectViolationCount: newCount
-        };
-      });
-    } else {
-      // Reset object violation count when no objects are detected
-      setViolationCounts(prev => ({
-        ...prev,
-        objectViolationCount: 0
-      }));
-    }
+    monitorPhoneDetection(phoneDetected);
   };
 
-  // Monitor person detection
+  // Monitor person detection with 7-second delay
+  const [personDetectionTimeout, setPersonDetectionTimeout] = useState<NodeJS.Timeout | null>(null);
+  const [lastPersonDetectionTime, setLastPersonDetectionTime] = useState<number>(Date.now());
+
   const monitorPersonDetection = (isPersonDetected: boolean) => {
+    const currentTime = Date.now();
+    
+    console.log('👤 Person detection monitoring:', {
+      isPersonDetected,
+      hasTimeout: !!personDetectionTimeout,
+      timeSinceLastDetection: currentTime - lastPersonDetectionTime
+    });
+    
     setViolationCounts(prev => ({
       ...prev,
       personDetected: isPersonDetected
     }));
     
-    // Terminate immediately if no person detected
     if (!isPersonDetected) {
-      terminateInterview("No person detected in frame - interview terminated.");
+      // Clear any existing timeout
+      if (personDetectionTimeout) {
+        clearTimeout(personDetectionTimeout);
+      }
+      
+      console.log('⚠️ Person not detected - starting 7-second countdown');
+      
+      // Set 7-second timeout before termination, cancel if person returns sooner
+      const timeout = setTimeout(() => {
+        // Only terminate if still absent
+        if (!violationCounts.personDetected) {
+          console.log('⚠️ No person detected for 7 seconds - terminating interview');
+          terminateInterview("No person detected in frame for 7 seconds - interview terminated.");
+        }
+      }, 7000);
+      
+      setPersonDetectionTimeout(timeout);
+    } else {
+      // Person detected - clear timeout and update last detection time
+      if (personDetectionTimeout) {
+        console.log('✅ Person detected - clearing timeout');
+        clearTimeout(personDetectionTimeout);
+        setPersonDetectionTimeout(null);
+      }
+      setLastPersonDetectionTime(currentTime);
     }
   };
 
@@ -1471,6 +1807,16 @@ Keep it conversational and natural!`;
               </div>
             </div>
 
+            {/* Resume / Document Upload (Optional) */}
+            <div className="space-y-2">
+              <Label className="text-sm font-semibold text-slate-700">Resume or Related Document (optional)</Label>
+              <p className="text-xs text-slate-500">Upload or paste your resume so Ava can tailor the first question to your background.</p>
+              <InterviewUpload
+                resumeText={resumeText}
+                onResumeTextChange={setResumeText}
+              />
+            </div>
+
 
 
             <Button
@@ -1513,10 +1859,10 @@ Keep it conversational and natural!`;
           </div>
         </div>
       )}
-      {/* Top row: 4 cards */}
-      <div className="grid grid-cols-4 gap-4 mb-4" style={{ width: '1480px' }}>
+      {/* Top row: 4 cards (moved Live Performance below Behavior Analysis) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-4 w-full max-w-screen-xl px-3">
         {/* Observation */}
-        <Card style={{ width: 364, height: 270 }} className="rounded-2xl shadow-xl bg-gradient-to-br from-white to-blue-50/30 border border-blue-100/50 flex flex-col">
+        <Card className="rounded-2xl shadow-xl bg-gradient-to-br from-white to-blue-50/30 border border-blue-100/50 flex flex-col h-[270px] w-full">
           <CardHeader className="pb-2 flex flex-row items-center justify-between">
             <div className="flex items-center gap-2">
             <Camera className="h-5 w-5 text-blue-600" />
@@ -1528,13 +1874,13 @@ Keep it conversational and natural!`;
             </Badge>
           </CardHeader>
           <CardContent className="p-2 flex items-center justify-center flex-1">
-            <div style={{ width: 346, height: 193 }} className="flex items-center justify-center bg-black rounded-lg overflow-hidden border border-slate-200">
+            <div className="w-full h-[193px] flex items-center justify-center rounded-lg overflow-hidden">
               <ObservationCamera onMetricsUpdate={setObservationMetrics} />
             </div>
           </CardContent>
         </Card>
         {/* Emotion Detection */}
-        <Card style={{ width: 364, height: 270 }} className="rounded-2xl shadow-xl bg-gradient-to-br from-white to-purple-50/30 border border-purple-100/50 flex flex-col">
+        <Card className="rounded-2xl shadow-xl bg-gradient-to-br from-white to-purple-50/30 border border-purple-100/50 flex flex-col h-[270px] w-full">
           <CardHeader className="pb-2 flex flex-row items-center justify-between">
             <div className="flex items-center gap-2">
               <Brain className="h-5 w-5 text-purple-600" />
@@ -1546,31 +1892,81 @@ Keep it conversational and natural!`;
             </Badge>
           </CardHeader>
           <CardContent className="p-2 flex items-center justify-center flex-1">
-            <div style={{ width: 346, height: 193 }} className="flex items-center justify-center bg-black rounded-lg overflow-hidden border border-slate-200">
+            <div className="w-full h-[193px] flex items-center justify-center rounded-lg overflow-hidden">
               <EmbeddedFaceApiCamera onEmotionDetected={handleEmotionDetected} />
             </div>
           </CardContent>
         </Card>
         {/* Object Detection */}
-        <Card style={{ width: 364, height: 270 }} className="rounded-2xl shadow-xl bg-gradient-to-br from-white to-green-50/30 border border-green-100/50 flex flex-col">
-          <CardHeader className="pb-2 flex flex-row items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Eye className="h-5 w-5 text-green-600" />
-            <CardTitle className="text-base font-semibold">Auto Object Detection</CardTitle>
+        <Card className="rounded-2xl shadow-xl bg-gradient-to-br from-white to-green-50/30 border border-green-100/50 flex flex-col h-[270px] w-full">
+          <CardHeader className="pb-2 flex flex-row items-start justify-between">
+            <div className="flex flex-col">
+              <div className="flex items-center gap-2">
+                <Eye className="h-5 w-5 text-green-600" />
+                <CardTitle className="text-base font-semibold">Object Detection</CardTitle>
+              </div>
             </div>
-            <Badge className="bg-green-100 text-green-700 text-xs font-semibold border border-green-200">
-              <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse mr-1"></div>
-              Scanning
-            </Badge>
+            <div className="flex items-center gap-2 flex-wrap justify-end">
+              {/* Objects count */}
+              <Badge variant="outline" className="text-[11px] bg-green-50 text-green-700 border-green-200">
+                {objectDetections.length} objs
+              </Badge>
+              {/* Phone indicator (priority) */}
+              {objectDetections.some(d => d.class === 'cell phone' || d.class === 'mobile phone' || d.class === 'phone' || d.class === 'smartphone') && (
+                <Badge variant="outline" className="text-[11px] bg-red-50 text-red-700 border-red-200">
+                  📱 Phone
+                </Badge>
+              )}
+              {/* Phone Detection State badge */}
+              {phoneDetectionState.isCurrentlyDetected && (
+                <Badge className={`text-[11px] font-semibold border ${
+                  phoneDetectionState.warningCount === 0 
+                    ? 'bg-yellow-100 text-yellow-700 border-yellow-200' 
+                    : phoneDetectionState.warningCount >= 3 
+                    ? 'bg-red-100 text-red-700 border-red-200'
+                    : 'bg-orange-100 text-orange-700 border-orange-200'
+                }`}>
+                  {phoneDetectionState.warningCount === 0 
+                    ? phoneWarningCountdown 
+                      ? `${phoneWarningCountdown}s` 
+                      : 'Phone Detected'
+                    : `Phone ${phoneDetectionState.warningCount}/4`
+                  }
+                </Badge>
+              )}
+
+            </div>
           </CardHeader>
-          <CardContent className="p-2 flex flex-col items-center justify-center flex-1">
-            <div style={{ width: 346, height: 193 }} className="flex items-center justify-center bg-black rounded-lg overflow-hidden border border-slate-200 mb-2">
-              <AutoObjectDetectionCamera onDetectionChange={(detections) => {
+          <CardContent className="p-2 flex items-center justify-center flex-1">
+            <div className="w-full h-[193px] flex items-center justify-center rounded-lg overflow-hidden">
+              <AutoObjectDetectionCamera embedded onDetectionChange={(detections) => {
                 setObjectDetections(detections);
                 
                 // Monitor for interview violations
                 monitorObjectDetection(detections);
-                monitorPersonDetection(detections.some(d => d.class === 'person' || d.class === 'human'));
+                
+                // Enhanced person detection with debugging and tolerance
+                const personDetected = detections.some(d => {
+                  const isPerson = d.class === 'person' || d.class === 'human';
+                  const hasGoodConfidence = d.score > 0.3; // Lower threshold for better detection
+                  return isPerson && hasGoodConfidence;
+                });
+                
+                // Add tolerance for brief detection gaps (person was detected recently)
+                const timeSinceLastDetection = Date.now() - lastPersonDetectionTime;
+                const isRecentlyDetected = timeSinceLastDetection < 2000; // 2 seconds tolerance
+                const finalPersonDetected = personDetected || isRecentlyDetected;
+                
+                console.log('🎯 Person detection check:', {
+                  detections: detections.map(d => ({ class: d.class, score: d.score })),
+                  personDetected,
+                  isRecentlyDetected,
+                  finalPersonDetected,
+                  timeSinceLastDetection,
+                  personClasses: detections.filter(d => d.class === 'person' || d.class === 'human')
+                });
+                
+                monitorPersonDetection(finalPersonDetected);
                 
                 // Check for phone detection
                 const phoneDetected = detections.some(d => 
@@ -1595,124 +1991,92 @@ Keep it conversational and natural!`;
             </div>
           </CardContent>
         </Card>
-        {/* Live Performance & Detection */}
-        <Card style={{ width: 364, height: 270 }} className="rounded-2xl shadow-xl bg-gradient-to-br from-white to-blue-50/30 border border-blue-100/50 flex flex-col">
+        
+        {/* Devi (HR) */}
+        <Card className="rounded-2xl shadow-xl bg-gradient-to-br from-white to-pink-50/30 border border-pink-100/50 flex flex-col h-[270px] w-full">
           <CardHeader className="pb-2 flex flex-row items-center justify-between">
             <div className="flex items-center gap-2">
-            <BarChart3 className="h-5 w-5 text-indigo-600" />
-            <CardTitle className="text-base font-semibold">Live Performance</CardTitle>
+              <Sparkles className="h-5 w-5 text-pink-600" />
+              <CardTitle className="text-base font-semibold">Devi (HR)</CardTitle>
             </div>
-            <Badge className="bg-green-100 text-green-700 text-xs font-semibold border border-green-200">
-              <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse mr-1"></div>
-              Detection Active
+                          <Badge className="bg-pink-100 text-pink-700 text-xs font-semibold border border-pink-200">
+              <div className="w-1.5 h-1.5 bg-pink-500 rounded-full animate-pulse mr-1"></div>
+              {isSpeaking ? 'Speaking' : 'Ready'}
             </Badge>
           </CardHeader>
-          <CardContent className="p-3 flex-1 flex flex-col">
-            {/* Performance Metrics */}
-            <div className="space-y-3 mb-4">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-slate-700">Confidence</span>
-                <div className="flex items-center gap-2">
-                  <span className="text-blue-600 text-sm font-bold">{Math.round(livePerformance.confidence)}%</span>
-                  <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
+          <CardContent className="p-2 flex flex-col items-center justify-center flex-1">
+            <div className="w-full h-[193px] flex items-center justify-center rounded-lg overflow-hidden mb-2">
+              {/* Minimal stage to show avatar */}
+              <div className="w-full h-full">
+                {/* @ts-ignore */}
+                {/* eslint-disable-next-line */}
+                <AvatarStage isSpeaking={isSpeaking} visemeHint={visemeHint} reactionTrigger={reactionTick} />
               </div>
-              </div>
-              <Progress value={livePerformance.confidence} className="h-2.5 bg-blue-100" />
-              
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-slate-700">Engagement</span>
-                <div className="flex items-center gap-2">
-                  <span className="text-purple-600 text-sm font-bold">{Math.round(livePerformance.engagement)}%</span>
-                  <div className="w-2 h-2 bg-purple-500 rounded-full animate-pulse"></div>
-              </div>
-              </div>
-              <Progress value={livePerformance.engagement} className="h-2.5 bg-purple-100" />
-              
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-slate-700">Attentiveness</span>
-                <div className="flex items-center gap-2">
-                  <span className="text-pink-600 text-sm font-bold">{Math.round(livePerformance.attentiveness)}%</span>
-                  <div className="w-2 h-2 bg-pink-500 rounded-full animate-pulse"></div>
-                </div>
-              </div>
-              <Progress value={livePerformance.attentiveness} className="h-2.5 bg-pink-100" />
-                  </div>
-              
-            {/* Detection Status */}
-            <div className="mt-auto space-y-2">
-                <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-600 font-medium">Face Visible:</span>
-                <span className={`font-bold ${violationCounts.faceNotVisibleCount === 0 ? 'text-green-600' : 'text-red-600'}`}>
-                    {violationCounts.faceNotVisibleCount === 0 ? '✓' : `⚠️ (${violationCounts.faceNotVisibleCount})`}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-600 font-medium">Phone Detected:</span>
-                <span className={`font-bold ${violationCounts.phoneDetectedCount === 0 ? 'text-green-600' : 'text-red-600'}`}>
-                    {violationCounts.phoneDetectedCount === 0 ? '✓' : `⚠️ (${violationCounts.phoneDetectedCount})`}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-600 font-medium">Objects:</span>
-                <span className={`font-bold ${violationCounts.objectViolationCount === 0 ? 'text-green-600' : 'text-orange-600'}`}>
-                    {violationCounts.objectViolationCount === 0 ? '✓' : `⚠️ (${violationCounts.objectViolationCount}/3)`}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between text-xs">
-                <span className="text-slate-600 font-medium">Person Detected:</span>
-                <span className={`font-bold ${violationCounts.personDetected ? 'text-green-600' : 'text-red-600'}`}>
-                    {violationCounts.personDetected ? '✓' : '❌'}
-                  </span>
-                </div>
-              
-              {/* Detected Objects */}
-              <div className="mt-2 p-2 bg-slate-50 rounded-lg border border-slate-200">
-                <div className="flex items-center justify-between text-xs mb-1">
-                  <span className="text-slate-700 font-semibold">Detected Objects:</span>
-                  <span className="text-slate-600 font-medium">{objectDetections.length > 0 ? `${objectDetections[0].class} (${Math.round(objectDetections[0].score * 100)}%)` : 'None'}</span>
-                </div>
-              </div>
-              
-              {/* Warning Status */}
-                {(violationCounts.faceNotVisibleCount > 0 || violationCounts.phoneDetectedCount > 0 || violationCounts.objectViolationCount > 0) && (
-                <div className="mt-2 p-2 bg-yellow-50 rounded-lg border border-yellow-200">
-                  <div className="text-xs font-bold text-yellow-800 mb-1">⚠️ Violations Detected:</div>
-                    <div className="space-y-1 text-xs">
-                      {violationCounts.faceNotVisibleCount > 0 && (
-                        <div className="flex items-center justify-between">
-                          <span className="text-yellow-700">Face Issue</span>
-                        <span className="text-yellow-800 font-bold">{violationCounts.faceNotVisibleCount}/2</span>
-                        </div>
-                      )}
-                      {violationCounts.phoneDetectedCount > 0 && (
-                        <div className="flex items-center justify-between">
-                          <span className="text-yellow-700">Phone Detected</span>
-                        <span className="text-yellow-800 font-bold">{violationCounts.phoneDetectedCount}/2</span>
-                        </div>
-                      )}
-                      {violationCounts.objectViolationCount > 0 && (
-                        <div className="flex items-center justify-between">
-                          <span className="text-yellow-700">Objects</span>
-                        <span className="text-yellow-800 font-bold">{violationCounts.objectViolationCount}/3</span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-                {isWarningActive && (
-                <div className="flex items-center justify-between text-xs mt-2 p-2 bg-red-50 rounded-lg border border-red-200">
-                  <span className="text-red-700 font-bold">⚠️ Warning Active</span>
-                    <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
-                  </div>
-                )}
             </div>
+            {/* Test button for avatar */}
+            <button
+              onClick={() => {
+                console.log('🧪 Testing new avatar lip sync...');
+                if ((window as any).testNewTalkingHead) {
+                  (window as any).testNewTalkingHead();
+                } else {
+                  console.warn('🧪 NewTalkingHead test function not available');
+                }
+              }}
+              className="px-2 py-1 text-xs bg-pink-600 text-white rounded hover:bg-pink-700 transition-colors"
+            >
+              Test Lip Sync
+            </button>
+            {/* Test morph targets directly */}
+            <button
+              onClick={() => {
+                console.log('🧪 Testing morph targets directly...');
+                if ((window as any).testMorphTargets) {
+                  (window as any).testMorphTargets();
+                } else {
+                  console.warn('🧪 testMorphTargets function not available');
+                }
+              }}
+              className="px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-pink-700 transition-colors ml-2"
+            >
+              Test Morph Targets
+            </button>
+            {/* Test isSpeaking prop */}
+            <button
+              onClick={() => {
+                console.log('🧪 Testing isSpeaking prop...');
+                setIsSpeaking(true);
+                setTimeout(() => {
+                  console.log('🧪 Setting isSpeaking to false...');
+                  setIsSpeaking(false);
+                }, 3000);
+              }}
+              className="px-2 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700 transition-colors ml-2"
+            >
+              Test isSpeaking
+            </button>
+            {/* Test avatar directly */}
+            <button
+              onClick={() => {
+                console.log('🧪 Testing avatar directly...');
+                if ((window as any).newTalkingHeadSpeak) {
+                  console.log('🧪 Calling newTalkingHeadSpeak directly...');
+                  (window as any).newTalkingHeadSpeak('Hello, this is a direct test of the avatar!');
+                } else {
+                  console.warn('🧪 newTalkingHeadSpeak function not available');
+                }
+              }}
+              className="px-2 py-1 text-xs bg-yellow-600 text-white rounded hover:bg-yellow-700 transition-colors ml-2"
+            >
+              Test Avatar Direct
+            </button>
           </CardContent>
         </Card>
       </div>
       {/* Main area: left column and chat area */}
-      <div className="flex flex-row gap-4" style={{ width: '1480px' }}>
+      <div className="flex flex-col xl:flex-row gap-4 w-full max-w-screen-xl px-3">
         {/* Left column: Emotion Analysis, Behavior Analysis */}
-        <div className="flex flex-col gap-4" style={{ width: 364 }}>
+        <div className="flex flex-col gap-4 w-full xl:w-[364px]">
           {/* Emotion Analytics (premium UI) */}
             <Card className="rounded-2xl shadow-xl bg-white/70 backdrop-blur-md flex flex-col border border-blue-100" style={{ width: 364, minHeight: 180, padding: 0 }}>
               <CardHeader className="pb-1 flex flex-row items-center gap-3 min-h-0">
@@ -1736,7 +2100,7 @@ Keep it conversational and natural!`;
                       <div className="flex-1 h-2.5 bg-gradient-to-r from-blue-100 to-purple-100 rounded-full overflow-hidden relative">
                         <div className="h-2.5 bg-gradient-to-r from-blue-500 to-purple-500 rounded-full transition-all duration-700" style={{ width: `${Math.round(Number(score) * 100)}%` }}></div>
                       </div>
-                      <span className={`text-xs w-8 text-right px-1 py-0.5 rounded-full font-semibold ${Number(score) > 0 ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-500'}`}>{Math.round(Number(score) * 100)}%</span>
+                      <span className={`${Number(score) > 0 ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-500'} text-xs w-8 text-right px-1 py-0.5 rounded-full font-semibold`}>{Math.round(Number(score) * 100)}%</span>
                     </div>
                   ))}
                 </div>
@@ -1865,52 +2229,61 @@ Keep it conversational and natural!`;
               )}
             </CardContent>
             {/* Input Area */}
-            {!isInterviewComplete && (
-              <CardFooter className="p-3 border-t">
-                <div className="flex flex-col w-full gap-2">
-                  <Textarea
-                    placeholder="Type your response or speak..."
-                    value={confirmedResponse + (interimResponse ? ' ' + interimResponse : '')}
-                    onChange={(e) => setConfirmedResponse(e.target.value)}
-                    className="min-h-[50px] max-h-[100px] resize-none"
-                    disabled={isInterviewComplete}
-                  />
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                    <Button
-                      onClick={toggleListening}
-          variant={isListening ? "destructive" : "outline"}
-          size="sm"
-                        disabled={isInterviewComplete || isSpeaking}
-          className="flex items-center gap-1"
-        >
-          {isListening ? (
-            <>
-              <Square className="h-4 w-4" />
-              Stop Recording
-            </>
-          ) : (
-            <>
-              <Mic className="h-4 w-4" />
-              Start Recording
-            </>
-          )}
-                    </Button>
-        {isListening && (
-                        <Badge variant="outline" className="animate-pulse bg-red-50 text-red-700 text-xs">
-            Recording...
-          </Badge>
-                      )}
-                      {!isListening && !isSpeaking && isInterviewStarted && (
-                        <Badge variant="outline" className="bg-green-50 text-green-700 text-xs">
-                          AI Ready - Click to Speak
-                        </Badge>
-                      )}
-                      {isSpeaking && (
-                        <Badge variant="outline" className="animate-pulse bg-blue-50 text-blue-700 text-xs">
-                          AI Speaking...
-                        </Badge>
+            <CardFooter className="p-3 border-t">
+              <div className="flex flex-col w-full gap-2">
+                <Textarea
+                  placeholder="Type your response or speak..."
+                  value={confirmedResponse + (interimResponse ? ' ' + interimResponse : '')}
+                  onChange={(e) => setConfirmedResponse(e.target.value)}
+                  className="min-h-[50px] max-h-[100px] resize-none"
+                  disabled={isInterviewComplete}
+                />
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                  <Button
+                    onClick={toggleListening}
+        variant={isListening ? "destructive" : "outline"}
+        size="sm"
+                      disabled={isInterviewComplete}
+        className="flex items-center gap-1"
+      >
+        {isListening ? (
+          <>
+            <Square className="h-4 w-4" />
+            Stop Recording
+          </>
+        ) : (
+          <>
+            <Mic className="h-4 w-4" />
+            Start Recording
+          </>
         )}
+                  </Button>
+      {isListening && (
+        <Badge variant="outline" className="animate-pulse bg-red-50 text-red-700 text-xs">
+          Recording...
+        </Badge>
+      )}
+      {speechRecognitionWorking && (
+        <Badge variant="outline" className="animate-pulse bg-green-50 text-green-700 text-xs">
+          Speech Detected ✓
+        </Badge>
+      )}
+      {isContinuousSpeaking && (
+        <Badge variant="outline" className="animate-pulse bg-yellow-50 text-yellow-700 text-xs">
+          Processing Speech...
+        </Badge>
+      )}
+      {!isListening && !isSpeaking && isInterviewStarted && (
+        <Badge variant="outline" className="bg-green-50 text-green-700 text-xs">
+          AI Ready - Click to Speak
+        </Badge>
+      )}
+      {isSpeaking && (
+        <Badge variant="outline" className="animate-pulse bg-blue-50 text-blue-700 text-xs">
+          AI Speaking...
+        </Badge>
+      )}
                   </div>
                   <Button 
                     onClick={submitResponse}
@@ -1920,10 +2293,9 @@ Keep it conversational and natural!`;
                     >
                       Send Response
                     </Button>
-                      </div>
-                      </div>
+                  </div>
+                </div>
               </CardFooter>
-            )}
           </Card>
         </div>
       </div>
@@ -1976,12 +2348,12 @@ Keep it conversational and natural!`;
               <h2 className="text-xl font-bold">Interview History</h2>
               <Button variant="outline" onClick={() => setShowHistory(false)}>
                 Close
-                  </Button>
-                </div>
+              </Button>
+            </div>
             <div className="h-full overflow-y-auto">
               <InterviewHistory />
-        </div>
-      </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

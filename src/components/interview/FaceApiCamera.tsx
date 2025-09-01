@@ -366,6 +366,7 @@ const FaceApiCamera: React.FC<FaceApiCameraProps> = ({ onEmotionDetected }) => {
           playsInline
           muted
           className="camera-video"
+          style={{ transform: 'scaleX(-1)' }}
         />
       </div>
     );

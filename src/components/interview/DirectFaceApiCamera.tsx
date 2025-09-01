@@ -268,6 +268,7 @@ const DirectFaceApiCamera: React.FC<DirectFaceApiCameraProps> = ({ onEmotionDete
         autoPlay
         playsInline
         muted
+        style={{ transform: 'scaleX(-1)' }}
       />
     </div>
   );

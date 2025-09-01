@@ -90,7 +90,7 @@ const StudentDashboardLayout = ({ children }: StudentDashboardLayoutProps) => {
       title: "CAREER GUIDE",
       items: [
         { name: "Career Path Simulator", icon: Route, path: "/career-path-simulator" },
-        { name: "Interview Coach", icon: Mic, path: "/interview-coach" },
+        { name: "Interview Coach", icon: Mic, path: "/ai-interview-coach" },
         { name: "Job Board", icon: Briefcase, path: "/job-board" },
         { name: "AI Job Switch Planner", icon: RotateCw, path: "/ai-job-switch-planner" },
         { name: "AI Shadow Career Simulator", icon: Users, path: "/ai-shadow-career-simulator" },

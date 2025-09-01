@@ -132,7 +132,6 @@ const SpeechController: React.FC<SpeechControllerProps> = ({
             size="sm"
             onClick={isListening ? onStopListening : onStartListening}
             className="relative"
-            disabled={isSpeaking}
           >
             {isListening ? (
               <>

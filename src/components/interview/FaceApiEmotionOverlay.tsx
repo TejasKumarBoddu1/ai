@@ -19,11 +19,15 @@ const FaceApiEmotionOverlay: React.FC<FaceApiEmotionOverlayProps> = ({
             <div className="text-xs text-muted-foreground">
               {Math.round(emotionState.confidence * 100)}% confidence
             </div>
-            {emotionState.age && emotionState.gender && (
-              <div className="text-xs text-muted-foreground">
-                ~{Math.round(emotionState.age)} years, {emotionState.gender}
-              </div>
-            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Face Detection Box */}
+      <div className="absolute inset-0 pointer-events-none">
+        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-64 h-64 border-2 border-green-400 rounded-lg bg-green-400/10">
+          <div className="absolute -top-6 left-1/2 transform -translate-x-1/2 bg-green-500 text-white px-2 py-1 rounded text-xs">
+            Face Detected
           </div>
         </div>
       </div>

@@ -120,7 +120,7 @@ const EnhancedCamera: React.FC<EnhancedCameraProps> = ({
         </div>
 
         {/* Camera and Canvas Container */}
-        <div className="flex justify-center w-full bg-slate-100 rounded-xl p-4">
+        <div className="flex justify-center w-full rounded-xl p-4">
           <div className="relative w-full max-w-[640px] aspect-[4/3]">
             <video
               ref={videoRef}
@@ -128,7 +128,7 @@ const EnhancedCamera: React.FC<EnhancedCameraProps> = ({
               playsInline
               muted
               className="absolute top-0 left-0 w-full h-full object-cover rounded-lg z-10"
-              style={{ aspectRatio: '4/3', backgroundColor: '#000' }}
+              style={{ aspectRatio: '4/3', transform: 'scaleX(-1)' }}
             />
             <canvas
               ref={canvasRef}
@@ -137,7 +137,7 @@ const EnhancedCamera: React.FC<EnhancedCameraProps> = ({
               className={`absolute top-0 left-0 w-full h-full z-20 rounded-lg pointer-events-none ${
                 overlayEnabled ? 'opacity-80' : 'opacity-0'
               }`}
-              style={{ aspectRatio: '4/3', backgroundColor: "transparent" }}
+              style={{ aspectRatio: '4/3', backgroundColor: "transparent", transform: 'scaleX(-1)' }}
             />
             {/* Real-time Status Indicators */}
             {overlayEnabled && (

@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from "react";
+import React, { useRef, useEffect, useCallback, useMemo } from "react";
 import { useCamera } from "@/hooks/useCamera";
 import { useMediapipe } from "@/hooks/useMediaPipe";
 
@@ -22,22 +22,52 @@ interface ObservationCameraProps {
   onMetricsUpdate?: (metrics: ObservationMetrics) => void;
 }
 
-const DEFAULT_ASPECT = 4 / 3;
-
 const ObservationCamera: React.FC<ObservationCameraProps> = ({ overlayEnabled = true, onMetricsUpdate }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const lastMetricsUpdateRef = useRef<number>(0);
+  const metricsUpdateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useCamera(videoRef);
   const metrics = useMediapipe(videoRef, canvasRef, overlayEnabled);
 
-  // Call onMetricsUpdate on every metrics change
-  useEffect(() => {
-    if (onMetricsUpdate) {
-      onMetricsUpdate(metrics);
+  // Optimized metrics update with debouncing
+  const debouncedMetricsUpdate = useCallback((metrics: ObservationMetrics) => {
+    const now = performance.now();
+    
+    // Clear existing timeout
+    if (metricsUpdateTimeoutRef.current) {
+      clearTimeout(metricsUpdateTimeoutRef.current);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
+    
+    // Only update if enough time has passed (100ms debounce)
+    if (now - lastMetricsUpdateRef.current > 100) {
+      lastMetricsUpdateRef.current = now;
+      onMetricsUpdate?.(metrics);
+    } else {
+      // Debounce rapid updates
+      metricsUpdateTimeoutRef.current = setTimeout(() => {
+        lastMetricsUpdateRef.current = performance.now();
+        onMetricsUpdate?.(metrics);
+      }, 100);
+    }
+  }, [onMetricsUpdate]);
+
+  // Memoized metrics object to prevent unnecessary re-renders
+  const memoizedMetrics = useMemo(() => ({
+    handPresence: metrics.handPresence,
+    facePresence: metrics.facePresence,
+    posePresence: metrics.posePresence,
+    handDetectionCounter: metrics.handDetectionCounter,
+    handDetectionDuration: metrics.handDetectionDuration,
+    notFacingCounter: metrics.notFacingCounter,
+    notFacingDuration: metrics.notFacingDuration,
+    badPostureDetectionCounter: metrics.badPostureDetectionCounter,
+    badPostureDuration: metrics.badPostureDuration,
+    isHandOnScreenRef: metrics.isHandOnScreenRef,
+    notFacingRef: metrics.notFacingRef,
+    hasBadPostureRef: metrics.hasBadPostureRef
+  }), [
     metrics.handPresence,
     metrics.facePresence,
     metrics.posePresence,
@@ -46,48 +76,69 @@ const ObservationCamera: React.FC<ObservationCameraProps> = ({ overlayEnabled = 
     metrics.notFacingCounter,
     metrics.notFacingDuration,
     metrics.badPostureDetectionCounter,
-    metrics.badPostureDuration,
-    metrics.isHandOnScreenRef.current,
-    metrics.notFacingRef.current,
-    metrics.hasBadPostureRef.current
+    metrics.badPostureDuration
   ]);
 
-  // Ensure canvas always matches video size
+  // Optimized metrics update effect
   useEffect(() => {
+    debouncedMetricsUpdate(memoizedMetrics);
+  }, [memoizedMetrics, debouncedMetricsUpdate]);
+
+  // Optimized canvas size management
+  const updateCanvasSize = useCallback(() => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
     if (!video || !canvas) return;
-    const updateCanvasSize = () => {
-      if (video.videoWidth && video.videoHeight) {
+    
+    if (video.videoWidth && video.videoHeight) {
+      // Only update if size actually changed
+      if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
       }
-    };
-    video.addEventListener('loadedmetadata', updateCanvasSize);
-    video.addEventListener('resize', updateCanvasSize);
+    }
+  }, []);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    
+    // Use passive listeners for better performance
+    video.addEventListener('loadedmetadata', updateCanvasSize, { passive: true });
+    video.addEventListener('resize', updateCanvasSize, { passive: true });
     updateCanvasSize();
+    
     return () => {
       video.removeEventListener('loadedmetadata', updateCanvasSize);
       video.removeEventListener('resize', updateCanvasSize);
     };
+  }, [updateCanvasSize]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (metricsUpdateTimeoutRef.current) {
+        clearTimeout(metricsUpdateTimeoutRef.current);
+      }
+    };
   }, []);
 
   return (
-    <div className="relative w-full aspect-video bg-slate-100 rounded-xl overflow-hidden">
+    <div className="relative w-full h-full rounded-lg overflow-hidden">
       <video
         ref={videoRef}
         autoPlay
         playsInline
         muted
         className="absolute top-0 left-0 w-full h-full rounded-lg z-10"
-        style={{ backgroundColor: '#000', objectFit: 'contain', width: '100%', height: '100%' }}
+        style={{ objectFit: 'cover', width: '100%', height: '100%', transform: 'scaleX(-1)' }}
       />
       <canvas
         ref={canvasRef}
         className={`absolute top-0 left-0 w-full h-full z-20 rounded-lg pointer-events-none ${
           overlayEnabled ? 'opacity-80' : 'opacity-0'
         }`}
-        style={{ backgroundColor: "transparent", objectFit: 'contain', width: '100%', height: '100%' }}
+        style={{ backgroundColor: "transparent", objectFit: 'cover', width: '100%', height: '100%', transform: 'scaleX(-1)' }}
       />
     </div>
   );

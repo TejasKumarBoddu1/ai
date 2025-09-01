@@ -368,7 +368,7 @@ const VideoRecorder: React.FC<VideoRecorderProps> = ({
         muted={!isPlaybackOnly}
         controls={isPlaybackOnly}
         className={`w-full h-full object-cover ${isVideoReady ? 'opacity-100' : 'opacity-0'}`}
-        style={{ backgroundColor: '#000' }} // Ensure black background for better visibility
+        style={{ transform: 'scaleX(-1)' }}
       />
       
       {!isPlaybackOnly && (

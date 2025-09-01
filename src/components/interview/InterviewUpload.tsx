@@ -17,7 +17,86 @@ export const InterviewUpload = ({
 }: InterviewUploadProps) => {
   const { toast } = useToast();
   const [isUploading, setIsUploading] = useState(false);
+  const [progress, setProgress] = useState<string>("");
   const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  // Dynamically load an external script once
+  const loadScript = (src: string) => new Promise<void>((resolve, reject) => {
+    const existing = document.querySelector(`script[src="${src}"]`) as HTMLScriptElement | null;
+    if (existing) {
+      existing.addEventListener('load', () => resolve());
+      if ((existing as any).loaded) return resolve();
+    }
+    const script = document.createElement('script');
+    script.src = src;
+    script.async = true;
+    script.onload = () => {
+      (script as any).loaded = true;
+      resolve();
+    };
+    script.onerror = () => reject(new Error(`Failed to load script: ${src}`));
+    document.body.appendChild(script);
+  });
+
+  const ensurePdfJs = async () => {
+    // pdf.js UMD build
+    const pdfJsCdnBase = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build';
+    await loadScript(`${pdfJsCdnBase}/pdf.min.js`);
+    // Configure worker
+    const w = window as any;
+    if (w.pdfjsLib) {
+      w.pdfjsLib.GlobalWorkerOptions.workerSrc = `${pdfJsCdnBase}/pdf.worker.min.js`;
+    } else {
+      throw new Error('pdfjsLib not available');
+    }
+  };
+
+  const ensureTesseract = async () => {
+    // Tesseract.js UMD build
+    await loadScript('https://cdn.jsdelivr.net/npm/tesseract.js@4/dist/tesseract.min.js');
+    const w = window as any;
+    if (!w.Tesseract) throw new Error('Tesseract not available');
+  };
+
+  const ocrPdfFile = async (file: File): Promise<string> => {
+    setProgress('Loading libraries...');
+    await ensurePdfJs();
+    await ensureTesseract();
+    const w = window as any;
+    const pdfjsLib = w.pdfjsLib;
+    const { Tesseract } = w;
+
+    setProgress('Reading PDF...');
+    const arrayBuffer = await file.arrayBuffer();
+    const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+    const pdf = await loadingTask.promise;
+
+    let fullText = '';
+    for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+      setProgress(`Rendering page ${pageNum} of ${pdf.numPages}...`);
+      const page = await pdf.getPage(pageNum);
+      const viewport = page.getViewport({ scale: 2 });
+      const canvas = document.createElement('canvas');
+      const context = canvas.getContext('2d');
+      if (!context) throw new Error('Failed to create canvas context');
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      await page.render({ canvasContext: context, viewport }).promise;
+
+      setProgress(`Extracting text (OCR) from page ${pageNum}...`);
+      const dataUrl = canvas.toDataURL('image/png');
+      const { data } = await Tesseract.recognize(dataUrl, 'eng', {
+        logger: (m: any) => {
+          if (m.status && m.progress != null) {
+            setProgress(`${m.status} (page ${pageNum}): ${Math.round(m.progress * 100)}%`);
+          }
+        }
+      });
+      fullText += (data?.text || '').trim() + '\n\n';
+    }
+
+    return fullText.trim();
+  };
   
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -47,36 +126,30 @@ export const InterviewUpload = ({
     
     try {
       let content = "";
-      
       if (file.type === 'text/plain') {
         content = await file.text();
-      } else {
-        // For PDF files, we'll use a simulated extraction
-        // In a real implementation, you'd use a PDF extraction library
-        toast({
-          title: "PDF Extraction",
-          description: "Extracting text from PDF (simulated for demo)",
-        });
-        
-        // Simulate PDF text extraction with a delay
-        await new Promise(resolve => setTimeout(resolve, 1500));
-        content = `Extracted from ${file.name} (this is a simulation).\n\nSkills: JavaScript, React, TypeScript, Node.js\nExperience: 3 years of frontend development\nEducation: Bachelor's in Computer Science`;
+      } else if (file.type === 'application/pdf') {
+        content = await ocrPdfFile(file);
       }
-      
-      onResumeTextChange(content);
-      
+
+      if (!content || content.trim().length === 0) {
+        throw new Error('No text could be extracted.');
+      }
+
+      onResumeTextChange(content.trim());
       toast({
-        title: "Resume uploaded",
-        description: "Your resume content has been loaded successfully."
+        title: "Resume processed",
+        description: `Extracted ${content.trim().length} characters of text from ${file.name}.`
       });
     } catch (error) {
       toast({
         title: "Error processing file",
-        description: "There was an error reading your file. Please try again.",
+        description: (error as Error)?.message || "There was an error reading your file. Please try again.",
         variant: "destructive"
       });
     } finally {
       setIsUploading(false);
+      setProgress("");
     }
   };
   
@@ -134,9 +207,10 @@ export const InterviewUpload = ({
                 </>
               )}
             </Button>
-            <p className="text-xs text-muted-foreground mt-2">
-              Max file size: 5MB
-            </p>
+            <p className="text-xs text-muted-foreground mt-2">Max file size: 5MB</p>
+            {isUploading && progress && (
+              <p className="text-xs text-muted-foreground mt-2">{progress}</p>
+            )}
           </div>
         </TabsContent>
       </Tabs>

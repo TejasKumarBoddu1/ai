@@ -24,7 +24,17 @@ const InterviewCoachNew: React.FC = () => {
   // Simplified navigation handler
   const handleAIInterviewClick = () => {
     console.log('Navigating to AI Interview Coach from InterviewCoachNew...');
-    navigate('/ai-interview-coach');
+    try {
+      navigate('/ai-interview-coach');
+      // Fallback hard navigation if SPA routing gets stuck
+      setTimeout(() => {
+        if (window.location.pathname !== '/ai-interview-coach') {
+          window.location.assign('/ai-interview-coach');
+        }
+      }, 250);
+    } catch (_) {
+      window.location.assign('/ai-interview-coach');
+    }
   };
 
   return (
@@ -58,6 +68,7 @@ const InterviewCoachNew: React.FC = () => {
               {/* CTA Button */}
               <div className="flex justify-center">
                 <Button 
+                  type="button"
                   size="lg"
                   onClick={handleAIInterviewClick}
                   className="bg-white/20 backdrop-blur-sm text-white border border-white/30 hover:bg-white/30 hover:shadow-2xl transform hover:scale-105 transition-all duration-300 px-8 py-4 text-lg font-semibold"

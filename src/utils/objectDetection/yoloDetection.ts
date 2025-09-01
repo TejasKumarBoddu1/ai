@@ -19,12 +19,12 @@ export class YOLOv8Detector {
 
   async loadModel(): Promise<void> {
     try {
-      // Load YOLOv8n model (you'll need to host this model file)
-      this.model = await tf.loadGraphModel('/models/yolov8n.json');
+      // Load YOLOv8s model (converted to TensorFlow.js format)
+      this.model = await tf.loadGraphModel('/models/yolov8s.json');
       this.isLoaded = true;
-      console.log('YOLOv8n model loaded successfully');
+      console.log('YOLOv8s model loaded successfully');
     } catch (error) {
-      console.error('Failed to load YOLOv8n model:', error);
+      console.error('Failed to load YOLOv8s model:', error);
       // Fallback: simulate detection for demo purposes
       this.isLoaded = false;
     }
@@ -37,9 +37,9 @@ export class YOLOv8Detector {
     }
 
     try {
-      // Preprocess image
+      // Preprocess image with higher resolution for better detection
       const tensor = tf.browser.fromPixels(canvas)
-        .resizeNearestNeighbor([640, 640])
+        .resizeNearestNeighbor([1024, 1024])
         .expandDims(0)
         .div(255.0);
 

@@ -860,7 +860,7 @@ const AdvancedInterviewSimulation: React.FC<AdvancedInterviewSimulationProps> = 
                 variant="default"
                 size="sm"
                 className="rounded-full px-3 flex items-center gap-1"
-                disabled={isListening || isSpeaking || state.isLoading || state.isFinished}
+                disabled={isListening || state.isLoading || state.isFinished}
               >
                 <Mic className="h-4 w-4 mr-1" />
                 {transcript ? 'Continue Speaking' : 'Start Speaking'}

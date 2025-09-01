@@ -215,12 +215,12 @@ export const ObjectDetectionCamera: React.FC<ObjectDetectionCameraProps> = ({
                 playsInline
                 muted
                 className="w-full h-auto rounded-lg"
-                style={{ maxWidth: '100%' }}
+                style={{ maxWidth: '100%', transform: 'scaleX(-1)' }}
               />
               <canvas
                 ref={canvasRef}
                 className="absolute top-0 left-0 w-full h-full rounded-lg pointer-events-none"
-                style={{ maxWidth: '100%' }}
+                style={{ maxWidth: '100%', transform: 'scaleX(-1)' }}
               />
             </>
           ) : (

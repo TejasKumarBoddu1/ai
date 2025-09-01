@@ -117,6 +117,7 @@ class YOLO {
    */
   public config: YOLOConfig = {
     modelUrl: "",
+    scoreThreshold: 0.3, // Lower threshold for better detection
     labels: [
       "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat", "traffic light",
       "fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat", "dog", "horse", "sheep", "cow",
@@ -316,8 +317,8 @@ class YOLO {
    */
   public preprocess(
     source: HTMLImageElement | HTMLVideoElement | HTMLCanvasElement,
-    modelWidth: number,
-    modelHeight: number
+    modelWidth: number = 1024,
+    modelHeight: number = 1024
   ): [tf.Tensor, { scale: number; dx: number; dy: number; origWidth: number; origHeight: number }] {
     // Convert source to tensor
     const imgTensor = tf.browser.fromPixels(source);

@@ -29,7 +29,6 @@ import Everyone from "@/pages/Everyone";
 import ResumeBuilder from "./pages/ResumeBuilder";
 import LinkedInOptimizer from "./pages/LinkedInOptimizer";
 import ATSScanner from "./pages/ATSScanner";
-import InterviewCoach from "./pages/InterviewCoach";
 import JobBoard from "./pages/JobBoard";
 import CareerPathSimulator from "./pages/CareerPathSimulator";
 import AIJobSwitchPlanner from "./pages/AIJobSwitchPlanner";
@@ -47,6 +46,7 @@ import Contact from "@/pages/Contact";
 import AIInterviewCoach from "./pages/AIInterviewCoach";
 import PostInterviewAnalysis from "./pages/PostInterviewAnalysis";
 import TensorFlowDebug from "./pages/TensorFlowDebug";
+import AvatarDemo from "./pages/AvatarDemo";
 
 // HR Dashboard imports
 import HRDashboardIndex from "@/pages/HRDashboard";
@@ -104,6 +104,8 @@ function App() {
                 
                 {/* Debug page */}
                 <Route path="/debug-tensorflow" element={<TensorFlowDebug />} />
+                 {/* Avatar demo page */}
+                 <Route path="/avatar" element={<AvatarDemo />} />
                 
                 {/* Public information pages */}
                 <Route path="/about" element={<About />} />
@@ -309,11 +311,7 @@ function App() {
                 
                 <Route 
                   path="/interview-coach" 
-                  element={
-                    <ProtectedRoute>
-                      <InterviewCoach />
-                    </ProtectedRoute>
-                  } 
+                  element={<Navigate to="/ai-interview-coach" replace />}
                 />
                 
                 <Route 

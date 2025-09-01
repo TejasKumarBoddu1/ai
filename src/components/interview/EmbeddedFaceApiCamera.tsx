@@ -56,7 +56,7 @@ const EmbeddedFaceApiCamera: React.FC<EmbeddedFaceApiCameraProps> = ({ onEmotion
   }, []);
   
   return (
-    <div className="camera-container" style={{ width: '100%', height: '240px', margin: '0 auto', overflow: 'hidden', position: 'relative' }}>
+    <div className="camera-container w-full h-full" style={{ width: '100%', height: '240px', margin: '0 auto', overflow: 'hidden', position: 'relative' }}>
       {error && (
         <div style={{ 
           position: 'absolute', 
@@ -95,7 +95,9 @@ const EmbeddedFaceApiCamera: React.FC<EmbeddedFaceApiCameraProps> = ({ onEmotion
           width: '100%',
           height: '100%',
           border: 'none',
-          overflow: 'hidden'
+          overflow: 'hidden',
+          objectFit: 'cover',
+          transform: 'scaleX(-1)'
         }}
         allow="camera;microphone;fullscreen;autoplay"
         sandbox="allow-same-origin allow-scripts allow-forms allow-popups"

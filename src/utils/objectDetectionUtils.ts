@@ -1,21 +1,26 @@
+const CLASS_COLOR_MAP: Record<string, string> = {
+  'person': '#2196F3',      // blue
+  'cell phone': '#E53935',  // red
+  'laptop': '#43A047',      // green
+  // Add more classes as needed
+  'default': '#FFC107'      // amber/yellow for unknown
+};
+
 export const drawRect = (
   detections: any[],
   ctx: CanvasRenderingContext2D
 ) => {
-  // Loop through each prediction
   detections.forEach((prediction) => {
-    // Extract boxes and classes
     const [x, y, width, height] = prediction.bbox;
     const text = prediction.class;
 
-    // Set styling
-    const color = Math.floor(Math.random() * 16777215).toString(16);
-    ctx.strokeStyle = "#" + color;
+    // Use fixed color per class
+    const color = CLASS_COLOR_MAP[text] || CLASS_COLOR_MAP['default'];
+    ctx.strokeStyle = color;
     ctx.font = "18px Arial";
+    ctx.fillStyle = color;
 
-    // Draw rectangles and text
     ctx.beginPath();
-    ctx.fillStyle = "#" + color;
     ctx.fillText(text, x, y);
     ctx.rect(x, y, width, height);
     ctx.stroke();

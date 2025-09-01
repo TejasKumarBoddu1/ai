@@ -15,8 +15,8 @@ const App = () => {
   const canvasRef = useRef(null);
 
   // Configs
-  const modelName = "yolov8n.onnx";
-  const modelInputShape = [1, 3, 640, 640];
+  const modelName = "yolov8s.onnx";
+  const modelInputShape = [1, 3, 1024, 1024];
   const topk = 100;
   const iouThreshold = 0.45;
   const scoreThreshold = 0.25;

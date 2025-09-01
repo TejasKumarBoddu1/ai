@@ -33,11 +33,11 @@ yarn build # Build for productions
 
 **Main Model**
 
-YOLOv8n model converted to onnx.
+YOLOv8s model converted to onnx.
 
 ```
-used model : yolov8n.onnx
-size       : 13 Mb
+used model : yolov8s.onnx
+size       : 22 Mb
 ```
 
 **NMS**

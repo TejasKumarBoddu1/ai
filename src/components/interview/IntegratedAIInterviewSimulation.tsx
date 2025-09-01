@@ -674,7 +674,7 @@ Keep it brief and natural.`;
                     size="icon"
                     onClick={toggleListening}
                     className={isListening ? "bg-red-50 border-red-200" : ""}
-                    disabled={isLoading || isSpeaking}
+                    disabled={isLoading}
                   >
                     {isListening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
                   </Button>
@@ -706,7 +706,7 @@ Keep it brief and natural.`;
                   )}
                   <Button 
                     onClick={submitResponse}
-                    disabled={isLoading || !currentResponse.trim() || isSpeaking}
+                    disabled={isLoading || !currentResponse.trim()}
                     className="px-6"
                   >
                     {isLoading ? "Processing..." : "Submit Response"}
@@ -799,7 +799,7 @@ Keep it brief and natural.`;
                 variant="outline"
                 size="sm"
                 onClick={toggleListening}
-                disabled={isInterviewComplete || isSpeaking}
+                disabled={isInterviewComplete}
                 className="w-full"
               >
                 {isListening ? (

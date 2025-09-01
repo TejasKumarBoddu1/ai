@@ -245,8 +245,8 @@ export class EnhancedMicrophoneManager {
     };
 
     this.recognition.onresult = (event) => {
-      if (this.isAISpeaking || this.isMutedDuringAIResponse || this.isTyping) {
-        console.log('🔇 Ignoring speech result - AI is speaking or user is typing');
+      if (this.isMutedDuringAIResponse || this.isTyping) {
+        console.log('🔇 Ignoring speech result - user is typing or manually muted');
         return;
       }
 
@@ -295,11 +295,11 @@ export class EnhancedMicrophoneManager {
       console.log('🎤 Enhanced Web Speech Recognition ended');
       this.isRecording = false;
       
-      // Only restart if AI is not speaking and we're not intentionally muted
-      if (!this.isMutedDuringAIResponse && !this.isAISpeaking) {
+      // Only restart if we're not intentionally muted
+      if (!this.isMutedDuringAIResponse) {
         setTimeout(() => {
           try {
-            if (this.recognition && !this.isAISpeaking && !this.isMutedDuringAIResponse) {
+            if (this.recognition && !this.isMutedDuringAIResponse) {
               this.recognition.start();
             }
           } catch (error) {
@@ -512,39 +512,11 @@ export class EnhancedMicrophoneManager {
     }, this.speechEndDelayMs);
   }
 
-  // FIXED: Better coordination between AI speaking and microphone
+  // UPDATED: Users now have full control over microphone regardless of AI speaking state
   setAISpeakingState(isSpeaking: boolean): void {
     this.isAISpeaking = isSpeaking;
-    if (isSpeaking) {
-      console.log('🤖 AI started speaking - pausing microphone recognition');
-      // Don't stop the microphone stream, just pause recognition
-      if (this.recognition) {
-        try {
-          this.recognition.stop();
-        } catch (error) {
-          console.error('Error stopping recognition:', error);
-        }
-      }
-      
-      if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
-        this.mediaRecorder.stop();
-      }
-    } else {
-      console.log('🤖 AI finished speaking - scheduling microphone recognition resume');
-      
-      // Clear any existing timeout
-      if (this.speechEndTimeout) {
-        clearTimeout(this.speechEndTimeout);
-      }
-      
-      // Shorter delay before resuming microphone recognition
-      this.speechEndTimeout = setTimeout(() => {
-        if (!this.isMutedDuringAIResponse) {
-          console.log('🎤 Resuming microphone recognition after AI speech completion');
-          this.startRecording();
-        }
-      }, this.speechEndDelayMs);
-    }
+    // Removed automatic microphone control - users can now speak whenever they want
+    console.log(`🤖 AI speaking state changed to: ${isSpeaking}`);
   }
 
   private blobToBase64(blob: Blob): Promise<string> {
@@ -557,7 +529,7 @@ export class EnhancedMicrophoneManager {
   }
 
   isCurrentlyRecording(): boolean {
-    return this.isRecording && !this.isMutedDuringAIResponse && !this.isAISpeaking;
+    return this.isRecording && !this.isMutedDuringAIResponse;
   }
 
   // Enhanced utility methods
@@ -589,7 +561,7 @@ export class EnhancedMicrophoneManager {
     } else {
       // Re-enable speech recognition after typing stops (with delay)
       this.typingTimeout = setTimeout(() => {
-        if (!this.isAISpeaking && !this.isMutedDuringAIResponse) {
+        if (!this.isMutedDuringAIResponse) {
           try {
             if (this.recognition && !this.isRecording) {
               this.recognition.start();

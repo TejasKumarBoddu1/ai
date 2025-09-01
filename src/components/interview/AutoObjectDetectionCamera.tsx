@@ -1,6 +1,5 @@
-import React, { useRef, useEffect, useState } from 'react';
-import * as tf from '@tensorflow/tfjs';
 import * as cocossd from '@tensorflow-models/coco-ssd';
+import { useEffect, useRef, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Badge } from '../ui/badge';
 import { Alert, AlertDescription } from '../ui/alert';
@@ -9,90 +8,61 @@ import { drawRect } from '../../utils/objectDetectionUtils';
 
 interface AutoObjectDetectionCameraProps {
   onDetectionChange?: (detections: any[]) => void;
+  embedded?: boolean; // when true, render minimal view without Card/header/status
 }
 
 export const AutoObjectDetectionCamera: React.FC<AutoObjectDetectionCameraProps> = ({
-  onDetectionChange
+  onDetectionChange,
+  embedded = false
 }) => {
-  const webcamRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const webcamRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [model, setModel] = useState<any>(null);
   const [isModelLoaded, setIsModelLoaded] = useState(false);
-  const [isDetecting, setIsDetecting] = useState(false);
+  const [loadingStatus, setLoadingStatus] = useState('Loading model...');
   const [detections, setDetections] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [loadingStatus, setLoadingStatus] = useState<string>('Initializing...');
-  const modelRef = useRef<any>(null);
-  const detectionIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const [isDetecting, setIsDetecting] = useState(false);
+  const detectIntervalRef = useRef<number | null>(null);
 
-  // Main function to run object detection
+  // Load model
   const runCoco = async () => {
     try {
-      setLoadingStatus('Loading TensorFlow.js...');
-      console.log('Loading TensorFlow.js...');
-      
-      // Initialize TensorFlow.js
-      await tf.ready();
-      console.log('TensorFlow.js backend:', tf.getBackend());
-      
-      setLoadingStatus('Loading coco-ssd model...');
-      console.log('Loading coco-ssd model...');
-      
-      // Load the coco-ssd model
-      const net = await cocossd.load();
-      modelRef.current = net;
+      setLoadingStatus('Loading model...');
+      const net = await cocossd.load({ base: 'lite_mobilenet_v2' });
+      setModel(net);
       setIsModelLoaded(true);
-      setLoadingStatus('Model ready');
-      console.log('coco-ssd model loaded successfully');
-
-      // Start detection loop
-      setIsDetecting(true);
-      detectionIntervalRef.current = setInterval(() => {
-        detect(net);
-      }, 100); // 10 FPS
-
-    } catch (err: any) {
-      console.error('Error in runCoco:', err);
-      setError(err.message || 'Failed to initialize object detection');
+      setLoadingStatus('Detection Ready');
+    } catch (e: any) {
+      console.error(e);
+      setError('Failed to load object detection model.');
       setLoadingStatus('Failed to load');
     }
   };
 
   const detect = async (net: any) => {
     try {
-      // Check if video is available and ready
       if (
-        typeof webcamRef.current !== "undefined" &&
+        typeof webcamRef.current !== 'undefined' &&
         webcamRef.current !== null &&
         webcamRef.current.readyState === 4
       ) {
-        // Get Video Properties
         const video = webcamRef.current;
         const videoWidth = video.videoWidth;
         const videoHeight = video.videoHeight;
 
-        // Set canvas dimensions
         if (canvasRef.current) {
           canvasRef.current.width = videoWidth;
           canvasRef.current.height = videoHeight;
         }
 
-        // Make detections
         const predictions = await net.detect(video);
-        
-        // Update detections state
         setDetections(predictions);
-        
-        // Notify parent component
-        if (onDetectionChange) {
-          onDetectionChange(predictions);
-        }
+        if (onDetectionChange) onDetectionChange(predictions);
 
-        // Draw detections on canvas
         const ctx = canvasRef.current?.getContext('2d');
         if (ctx) {
-          // Clear canvas
           ctx.clearRect(0, 0, videoWidth, videoHeight);
-          // Draw detections
           drawRect(predictions, ctx);
         }
       }
@@ -106,16 +76,10 @@ export const AutoObjectDetectionCamera: React.FC<AutoObjectDetectionCameraProps>
   const startCamera = async () => {
     try {
       const mediaStream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          width: { ideal: 640 },
-          height: { ideal: 480 },
-          facingMode: 'user'
-        }
+        video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' }
       });
-      
       if (webcamRef.current) {
-        webcamRef.current.srcObject = mediaStream;
-        console.log('Camera started successfully');
+        webcamRef.current.srcObject = mediaStream as any;
       }
     } catch (err) {
       console.error('Error accessing camera:', err);
@@ -123,55 +87,71 @@ export const AutoObjectDetectionCamera: React.FC<AutoObjectDetectionCameraProps>
     }
   };
 
-  // Initialize everything on component mount
+  // Initialize
   useEffect(() => {
-    console.log('AutoObjectDetectionCamera mounting...');
-    
-    // Start camera first
-    startCamera();
-    
-    // Then start object detection
     runCoco();
-
-    // Cleanup on unmount
-    return () => {
-      console.log('AutoObjectDetectionCamera unmounting...');
-      if (detectionIntervalRef.current) {
-        clearInterval(detectionIntervalRef.current);
-      }
-      if (webcamRef.current?.srcObject) {
-        const stream = webcamRef.current.srcObject as MediaStream;
-        stream.getTracks().forEach(track => track.stop());
-      }
-    };
+    startCamera();
   }, []);
 
+  // Loop detection
+  useEffect(() => {
+    if (isModelLoaded && model && !detectIntervalRef.current) {
+      setIsDetecting(true);
+      const id = window.setInterval(() => detect(model), 100);
+      detectIntervalRef.current = id;
+    }
+    return () => {
+      if (detectIntervalRef.current) {
+        clearInterval(detectIntervalRef.current);
+        detectIntervalRef.current = null;
+      }
+    };
+  }, [isModelLoaded, model]);
+
+  // Embedded minimal view (no card, no status)
+  if (embedded) {
+    return (
+      <div className="relative w-full h-full">
+        <video
+          ref={webcamRef}
+          autoPlay
+          playsInline
+          muted
+          className="absolute inset-0 w-full h-full object-cover rounded-lg"
+          style={{ objectFit: 'cover', transform: 'scaleX(-1)' }}
+        />
+        <canvas
+          ref={canvasRef}
+          className="absolute inset-0 w-full h-full rounded-lg pointer-events-none"
+          style={{ objectFit: 'cover', transform: 'scaleX(-1)' }}
+        />
+      </div>
+    );
+  }
+
+  // Standalone card view (original)
   return (
-    <Card className="w-full max-w-2xl mx-auto">
+    <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Camera className="h-5 w-5" />
-          Auto Object Detection
+        <CardTitle>
+          Object Detection
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        {/* Error Display */}
         {error && (
           <Alert variant="destructive">
             <AlertDescription>{error}</AlertDescription>
           </Alert>
         )}
 
-        {/* Status */}
         <div className="flex items-center gap-2">
-          <Badge variant={isModelLoaded ? "default" : "secondary"}>
-            {isModelLoaded ? "Detection Active" : loadingStatus}
+          <Badge variant={isModelLoaded ? 'default' : 'secondary'}>
+            {isModelLoaded ? 'Detection Ready' : loadingStatus}
           </Badge>
           {!isModelLoaded && <Loader2 className="h-4 w-4 animate-spin" />}
           {isDetecting && <Scan className="h-4 w-4 animate-pulse" />}
         </div>
 
-        {/* Video and Canvas Container */}
         <div className="relative w-full max-w-md mx-auto">
           <video
             ref={webcamRef}
@@ -188,7 +168,6 @@ export const AutoObjectDetectionCamera: React.FC<AutoObjectDetectionCameraProps>
           />
         </div>
 
-        {/* Detection Results */}
         {detections.length > 0 && (
           <div className="space-y-2">
             <h4 className="font-medium">Detected Objects:</h4>
