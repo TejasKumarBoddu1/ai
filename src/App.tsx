@@ -48,6 +48,39 @@ import PostInterviewAnalysis from "./pages/PostInterviewAnalysis";
 import TensorFlowDebug from "./pages/TensorFlowDebug";
 import AvatarDemo from "./pages/AvatarDemo";
 
+// Simple Error Boundary to prevent a crashing UI element from blanking the app
+class ErrorBoundary extends React.Component<React.PropsWithChildren<{}>, { hasError: boolean; message?: string }> {
+  constructor(props: any) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError(error: any) {
+    return { hasError: true, message: error?.message || 'Something went wrong.' };
+  }
+  componentDidCatch(error: any, info: any) {
+    console.error('UI error caught by ErrorBoundary:', error, info);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex h-screen w-full items-center justify-center">
+          <div className="max-w-md text-center">
+            <div className="mb-3 text-xl font-semibold">An error occurred</div>
+            <div className="text-sm text-gray-600 mb-4">{this.state.message}</div>
+            <button
+              className="px-3 py-2 rounded bg-blue-600 text-white text-sm"
+              onClick={() => window.location.reload()}
+            >
+              Reload
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children as any;
+  }
+}
+
 // HR Dashboard imports
 import HRDashboardIndex from "@/pages/HRDashboard";
 import HRDashboardJobs from "@/pages/HRDashboard/Jobs";
@@ -86,7 +119,8 @@ function App() {
         <AuthProvider>
           <BlockchainProvider>
             <RoleBasedRedirect>
-              <Routes>
+              <ErrorBoundary>
+                <Routes>
                 {/* Auth routes - redirect old login to new login */}
                 <Route path="/login" element={<Navigate to="/new-login" replace />} />
                 <Route path="/new-login" element={<NewLogin />} />
@@ -457,7 +491,8 @@ function App() {
                 
                 {/* Catch-all route for 404 */}
                 <Route path="*" element={<NotFound />} />
-              </Routes>
+                </Routes>
+              </ErrorBoundary>
               <Toaster />
             </RoleBasedRedirect>
           </BlockchainProvider>
