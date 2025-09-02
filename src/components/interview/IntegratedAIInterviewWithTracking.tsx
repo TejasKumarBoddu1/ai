@@ -32,6 +32,7 @@ import CodeEditor from './CodeEditor';
 import { InterviewUpload } from './InterviewUpload';
 import AvatarStage from './avatar3d/AvatarStage';
 import NewTalkingHeadAvatar from './avatar3d/NewTalkingHeadAvatar';
+import { createDetectionManager, type DetectionSnapshot } from '@/utils/unifiedDetectionManager';
 
 /**
  * IMPROVEMENTS MADE TO PHONE DETECTION SYSTEM:
@@ -121,6 +122,21 @@ const IntegratedAIInterviewWithTracking: React.FC = () => {
   const [objectDetections, setObjectDetections] = useState<any[]>([]);
   const [observationMetrics, setObservationMetrics] = useState<ObservationMetrics | null>(null);
   
+  // Multiple People Detection States
+  const [multiplePeopleWarningCount, setMultiplePeopleWarningCount] = useState(0);
+  const [isMultiplePeopleWarningActive, setIsMultiplePeopleWarningActive] = useState(false);
+  const [lastMultiplePeopleWarningTime, setLastMultiplePeopleWarningTime] = useState<number>(0);
+  const [lastDetectionHash, setLastDetectionHash] = useState<string>('');
+
+  // Phone Detection Warning States
+  const [phoneWarningCount, setPhoneWarningCount] = useState(0);
+  const [isPhoneWarningActive, setIsPhoneWarningActive] = useState(false);
+  const [lastPhoneWarningTime, setLastPhoneWarningTime] = useState<number>(0);
+
+  // Global detection pause
+  const [isDetectionPaused, setIsDetectionPaused] = useState(false);
+  const detectionPauseTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
   // Interview data storage session ID
   const [sessionId, setSessionId] = useState<string | null>(null);
   
@@ -139,6 +155,9 @@ const IntegratedAIInterviewWithTracking: React.FC = () => {
   const { toast } = useToast();
   const { metrics } = useMetrics();
   const [showScrollButton, setShowScrollButton] = useState(false);
+
+  // Detection manager (scratch logic)
+  const detectionManagerRef = useRef<ReturnType<typeof createDetectionManager> | null>(null);
 
   // Response time tracking for Live Performance
   const [lastResponseTime, setLastResponseTime] = useState<Date | null>(null);
@@ -171,6 +190,21 @@ const IntegratedAIInterviewWithTracking: React.FC = () => {
     }, 30000); // 30 seconds
     
     setResponseTimeout(timeout);
+  };
+
+  // Helper: start a global 5s detection pause (blocks monitorObjectDetection processing)
+  const startDetectionPause = (ms: number = 5000) => {
+    if (detectionPauseTimeoutRef.current) {
+      clearTimeout(detectionPauseTimeoutRef.current);
+      detectionPauseTimeoutRef.current = null;
+    }
+    setIsDetectionPaused(true);
+    detectionPauseTimeoutRef.current = setTimeout(() => {
+      setIsDetectionPaused(false);
+      // Allow a fresh event after pause
+      setLastDetectionHash('');
+      detectionPauseTimeoutRef.current = null;
+    }, ms);
   };
 
   // Decrease performance when no response for a while
@@ -262,9 +296,50 @@ const IntegratedAIInterviewWithTracking: React.FC = () => {
 
   // Cleanup timeout on unmount
   useEffect(() => {
+    // init detection manager
+    detectionManagerRef.current = createDetectionManager(
+      {
+        onWarning: (type, nextCount, message) => {
+          // set overlay + pause handled below
+          setIsWarningActive(true);
+          setWarningMessage(message);
+          if (type === 'phone') {
+            setPhoneWarningCount(nextCount);
+            setIsPhoneWarningActive(true);
+          } else {
+            setMultiplePeopleWarningCount(nextCount);
+            setIsMultiplePeopleWarningActive(true);
+          }
+          // speak
+          speechManagerRef.current?.speak(message.replace('⚠️','').trim(), { ...DEV_TTS_OPTIONS, voice: DEV_TTS_OPTIONS.voice });
+          // global pause
+          startDetectionPause(5000);
+          // auto-hide overlay after 5s
+          const t = setTimeout(() => {
+            setIsWarningActive(false);
+            setWarningMessage('');
+            setIsPhoneWarningActive(false);
+            setIsMultiplePeopleWarningActive(false);
+          }, 5000);
+          setWarningTimeout(t);
+        },
+        onResume: () => {
+          // nothing special; detections resume automatically
+        },
+        onTerminate: (type, count, message) => {
+          terminateInterview(message);
+        }
+      },
+      { pauseMs: 5000 }
+    );
+
     return () => {
       if (speechTimeout) {
         clearTimeout(speechTimeout);
+      }
+      if (detectionPauseTimeoutRef.current) {
+        clearTimeout(detectionPauseTimeoutRef.current);
+        detectionPauseTimeoutRef.current = null;
       }
     };
   }, [speechTimeout]);
@@ -961,6 +1036,24 @@ Keep it conversational and natural!`;
     }
     setLastPersonDetectionTime(Date.now());
     
+    // Reset multiple people detection states
+    setMultiplePeopleWarningCount(0);
+    setIsMultiplePeopleWarningActive(false);
+    setLastMultiplePeopleWarningTime(0);
+    setLastDetectionHash('');
+    
+    // Reset phone detection states
+    setPhoneWarningCount(0);
+    setIsPhoneWarningActive(false);
+    setLastPhoneWarningTime(0);
+    
+    // Reset global pause
+    if (detectionPauseTimeoutRef.current) clearTimeout(detectionPauseTimeoutRef.current);
+    setIsDetectionPaused(false);
+
+    // Reset new detection manager counters if present
+    if (detectionManagerRef.current) detectionManagerRef.current.reset();
+    
     setWarningsIssued({
       faceWarning: false,
       phoneWarning: false
@@ -1302,6 +1395,22 @@ Keep it conversational and natural!`;
     }
     setLastPersonDetectionTime(Date.now());
     
+    // Reset multiple people detection states
+    setMultiplePeopleWarningCount(0);
+    setIsMultiplePeopleWarningActive(false);
+    setLastMultiplePeopleWarningTime(0);
+    setLastDetectionHash('');
+    
+    // Reset phone detection states
+    setPhoneWarningCount(0);
+    setIsPhoneWarningActive(false);
+    setLastPhoneWarningTime(0);
+    
+    // Reset global pause
+    if (detectionPauseTimeoutRef.current) clearTimeout(detectionPauseTimeoutRef.current);
+    setIsDetectionPaused(false);
+    if (detectionManagerRef.current) detectionManagerRef.current.reset();
+    
     // Clear current session from local storage
     if (sessionId) {
       interviewDataStorage.clearCurrentSession();
@@ -1357,6 +1466,8 @@ Keep it conversational and natural!`;
       }
       // Clear phone warning countdown
       setPhoneWarningCountdown(null);
+      // Clear multiple people detection warning
+      setIsMultiplePeopleWarningActive(false);
     };
   }, [warningTimeout]);
 
@@ -1466,6 +1577,8 @@ Keep it conversational and natural!`;
     });
   };
 
+  // (Removed legacy phone/multiple-people warning handlers in favor of unified detectionManager)
+
   // Monitor face visibility
   const monitorFaceVisibility = (isFaceVisible: boolean) => {
     if (!isFaceVisible) {
@@ -1498,115 +1611,27 @@ Keep it conversational and natural!`;
   const [phoneWarningTimeout, setPhoneWarningTimeout] = useState<NodeJS.Timeout | null>(null);
   const [phoneStillDetected, setPhoneStillDetected] = useState(false);
 
-  // Phone detection state via ref to avoid re-renders racing
-  const phoneStateRef = useRef<{ count: number; inGrace: boolean; graceTimeout: NodeJS.Timeout | null; lastPresent: boolean }>({
-    count: 0,
-    inGrace: false,
-    graceTimeout: null,
-    lastPresent: false
-  });
+  // (Removed legacy phone state/grace logic and monitorPhoneDetection)
 
-  // People detection distinct-event tracking
-  const twoPeopleRef = useRef<{ prevTwoPlus: boolean; events: number }>({ prevTwoPlus: false, events: 0 });
-
-  // Helper to clear phone grace timer
-  const clearPhoneGrace = () => {
-    const s = phoneStateRef.current;
-    if (s.graceTimeout) {
-      clearTimeout(s.graceTimeout);
-      s.graceTimeout = null;
-    }
-  };
-
-  // New phone detection rule: single warning per detection, 5s grace loop, terminate on 3rd
-  const monitorPhoneDetection = (isPhoneDetected: boolean) => {
-    const s = phoneStateRef.current;
-
-    if (s.inGrace) {
-      // During grace, only record presence; ignore further warnings
-      s.lastPresent = isPhoneDetected;
-      return;
-    }
-
-    if (!isPhoneDetected) {
-      // No phone; if not in grace, keep state calm
-      s.lastPresent = false;
-      return;
-    }
-
-    // New detection event outside grace
-    s.count += 1;
-    s.inGrace = true;
-    s.lastPresent = true;
-    issueWarning('phone');
-
-    // Start 5s grace window
-    clearPhoneGrace();
-    s.graceTimeout = setTimeout(() => {
-      const state = phoneStateRef.current;
-      state.inGrace = false;
-
-      if (state.lastPresent) {
-        // Still detected -> count another detection and warn/terminate
-        state.count += 1;
-        if (state.count >= 3) {
-          clearPhoneGrace();
-          terminateInterview('Phone detected 3 times. Interview terminated.');
-          return;
-        }
-        // Warn again and start another grace cycle
-        state.inGrace = true;
-        issueWarning('phone');
-        clearPhoneGrace();
-        state.graceTimeout = setTimeout(() => {
-          const st2 = phoneStateRef.current;
-          st2.inGrace = false;
-          if (st2.lastPresent) {
-            st2.count += 1;
-            if (st2.count >= 3) {
-              clearPhoneGrace();
-              terminateInterview('Phone detected 3 times. Interview terminated.');
-              return;
-            }
-            // If somehow still present, loop again (rare)
-            st2.inGrace = true;
-            issueWarning('phone');
-            clearPhoneGrace();
-            st2.graceTimeout = setTimeout(() => {
-              const st3 = phoneStateRef.current;
-              st3.inGrace = false;
-              if (st3.lastPresent) {
-                st3.count += 1;
-                if (st3.count >= 3) {
-                  clearPhoneGrace();
-                  terminateInterview('Phone detected 3 times. Interview terminated.');
-                  return;
-                }
-              } else {
-                // Removed during this grace
-                st3.count = 0;
-              }
-            }, 5000);
-          } else {
-            // Removed during grace -> reset count
-            st2.count = 0;
-          }
-        }, 5000);
-      } else {
-        // Removed during grace -> reset count completely
-        state.count = 0;
-      }
-    }, 5000);
-  };
-
-  // Monitor object detection (reverted to previous minimal behavior)
+  // Monitor object detection with unified detection manager only
   const monitorObjectDetection = (detectedObjects: any[]) => {
-    // Only react to phones. Ignore other classes here.
+    if (!detectionManagerRef.current) return;
     const phoneDetected = detectedObjects.some(obj => (
       obj.class === 'cell phone' || obj.class === 'mobile phone' || obj.class === 'phone' || obj.class === 'smartphone'
-    ) && obj.score > 0.7);
-    
-    monitorPhoneDetection(phoneDetected);
+    ) && obj.score > 0.5);
+    const peopleDetected = detectedObjects.filter(obj => {
+      const isPerson = obj.class === 'person' || obj.class === 'human';
+      const hasGoodConfidence = obj.score > 0.3;
+      return isPerson && hasGoodConfidence;
+    });
+    const snap: DetectionSnapshot = {
+      now: Date.now(),
+      isInterviewStarted,
+      phoneDetected,
+      peopleCount: peopleDetected.length
+    };
+    detectionManagerRef.current.process(snap);
+    detectionManagerRef.current.tick(snap.now);
   };
 
   // Monitor person detection with 7-second delay
@@ -1846,12 +1871,12 @@ Keep it conversational and natural!`;
   return (
     <div className="w-full min-h-screen bg-gradient-to-br from-slate-100 to-gray-200 flex flex-col items-center py-6">
       {/* Warning Overlay */}
-      {isWarningActive && (
+      {(isWarningActive || isMultiplePeopleWarningActive || isPhoneWarningActive) && (
         <div className="fixed inset-0 bg-red-500/20 backdrop-blur-sm z-50 flex items-center justify-center">
           <div className="bg-white rounded-2xl shadow-2xl p-8 max-w-md mx-4 text-center border-4 border-red-500">
             <div className="text-red-500 text-6xl mb-4">⚠️</div>
             <h3 className="text-xl font-bold text-red-700 mb-2">Interview Warning</h3>
-            <p className="text-gray-700 mb-4">{warningMessage}</p>
+            <p className="text-gray-700 mb-4">{warningMessage || (isMultiplePeopleWarningActive ? `Multiple people detected. This is warning ${multiplePeopleWarningCount}/3. Continued violation will result in interview termination.` : (isPhoneWarningActive ? `Phone detected. This is warning ${phoneWarningCount}/3. Continued violation will result in interview termination.` : ''))}</p>
             <div className="flex items-center justify-center gap-2 text-sm text-gray-600">
               <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
               <span>Resuming in 5 seconds...</span>
@@ -1859,8 +1884,33 @@ Keep it conversational and natural!`;
           </div>
         </div>
       )}
-      {/* Top row: 4 cards (moved Live Performance below Behavior Analysis) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-4 w-full max-w-screen-xl px-3">
+              {/* Multiple People Warning Overlay */}
+        {isMultiplePeopleWarningActive && (
+          <div className="fixed inset-0 bg-orange-500/20 backdrop-blur-sm z-50 flex items-center justify-center">
+            <div className="bg-white rounded-2xl shadow-2xl p-8 max-w-md mx-4 text-center border-4 border-orange-500">
+              <div className="text-orange-500 text-6xl mb-4">⚠️</div>
+              <h3 className="text-xl font-bold text-orange-700 mb-2">Multiple People Warning</h3>
+              <p className="text-gray-700 mb-4">
+                Multiple people detected in camera view. This is warning {multiplePeopleWarningCount}/3.
+              </p>
+              <div className="mb-4 p-3 bg-orange-50 rounded-lg border border-orange-200">
+                <p className="text-sm text-orange-700 font-medium">
+                  Warning {multiplePeopleWarningCount}/3 - Multiple people detected
+                </p>
+                <p className="text-xs text-orange-600 mt-1">
+                  {multiplePeopleWarningCount >= 3 ? 'Interview will be terminated.' : 'Continued violation will result in interview termination.'}
+                </p>
+              </div>
+              <div className="flex items-center justify-center gap-2 text-sm text-gray-600">
+                <div className="w-2 h-2 bg-orange-500 rounded-full animate-pulse"></div>
+                <span>Warning will auto-hide in 5 seconds...</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Top row: 4 cards (moved Live Performance below Behavior Analysis) */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-4 w-full max-w-screen-xl px-3">
         {/* Observation */}
         <Card className="rounded-2xl shadow-xl bg-gradient-to-br from-white to-blue-50/30 border border-blue-100/50 flex flex-col h-[270px] w-full">
           <CardHeader className="pb-2 flex flex-row items-center justify-between">
@@ -1911,6 +1961,18 @@ Keep it conversational and natural!`;
               <Badge variant="outline" className="text-[11px] bg-green-50 text-green-700 border-green-200">
                 {objectDetections.length} objs
               </Badge>
+              {/* Multiple people warning indicator */}
+              {multiplePeopleWarningCount > 0 && isInterviewStarted && (
+                <Badge variant="outline" className="text-[11px] bg-orange-50 text-orange-700 border-orange-200">
+                  ⚠️ {multiplePeopleWarningCount}/3
+                </Badge>
+              )}
+              {/* Multiple people cooldown indicator */}
+              {isInterviewStarted && multiplePeopleWarningCount > 0 && (Date.now() - lastMultiplePeopleWarningTime) <= 10000 && (
+                <Badge variant="outline" className="text-[11px] bg-yellow-50 text-yellow-700 border-yellow-200">
+                  ⏸️ {Math.ceil((10000 - (Date.now() - lastMultiplePeopleWarningTime)) / 1000)}s
+                </Badge>
+              )}
               {/* Phone indicator (priority) */}
               {objectDetections.some(d => d.class === 'cell phone' || d.class === 'mobile phone' || d.class === 'phone' || d.class === 'smartphone') && (
                 <Badge variant="outline" className="text-[11px] bg-red-50 text-red-700 border-red-200">
@@ -1967,15 +2029,6 @@ Keep it conversational and natural!`;
                 });
                 
                 monitorPersonDetection(finalPersonDetected);
-                
-                // Check for phone detection
-                const phoneDetected = detections.some(d => 
-                  d.class === 'cell phone' || 
-                  d.class === 'mobile phone' || 
-                  d.class === 'phone' ||
-                  d.class === 'smartphone'
-                );
-                monitorPhoneDetection(phoneDetected);
                 
                 // Save object detection data to local storage
                 if (sessionId && detections.length > 0) {

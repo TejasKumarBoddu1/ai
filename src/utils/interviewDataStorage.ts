@@ -56,6 +56,9 @@ export interface InterviewSession {
   emotions: EmotionData[];
   behaviorAnalysis: BehaviorAnalysis[];
   objectDetections: ObjectDetection[];
+  // Violation counters
+  phoneWarningCount?: number;
+  multiplePeopleWarningCount?: number;
   confidenceScore: number;
   engagementScore: number;
   attentivenessScore: number;
@@ -76,6 +79,7 @@ export interface InterviewDataStorage {
   addEmotion: (emotion: Omit<EmotionData, 'timestamp'>) => void;
   addBehaviorAnalysis: (behavior: Omit<BehaviorAnalysis, 'timestamp'>) => void;
   addObjectDetection: (detection: Omit<ObjectDetection, 'timestamp'>) => void;
+  addViolation: (type: 'phone' | 'multiplePeople') => void;
   updateScores: (scores: { confidenceScore?: number; engagementScore?: number; attentivenessScore?: number }) => void;
   completeSession: () => InterviewSession | null;
   getCurrentSession: () => InterviewSession | null;
@@ -220,6 +224,8 @@ class InterviewDataManager implements InterviewDataStorage {
       emotions: [],
       behaviorAnalysis: [],
       objectDetections: [],
+      phoneWarningCount: 0,
+      multiplePeopleWarningCount: 0,
       confidenceScore: 85,
       engagementScore: 72,
       attentivenessScore: 90,
@@ -300,6 +306,21 @@ class InterviewDataManager implements InterviewDataStorage {
     currentSession.objectDetections.push(detectionWithTimestamp);
     this.saveCurrentSession(currentSession);
     console.log('🔍 Added object detection to session:', detection.class);
+  }
+
+  addViolation(type: 'phone' | 'multiplePeople'): void {
+    const currentSession = this.loadCurrentSession();
+    if (!currentSession) {
+      console.warn('No active session to add violation to');
+      return;
+    }
+    if (type === 'phone') {
+      currentSession.phoneWarningCount = (currentSession.phoneWarningCount || 0) + 1;
+    } else {
+      currentSession.multiplePeopleWarningCount = (currentSession.multiplePeopleWarningCount || 0) + 1;
+    }
+    this.saveCurrentSession(currentSession);
+    console.log('⚠️ Added violation to session:', type);
   }
 
   updateScores(scores: { confidenceScore?: number; engagementScore?: number; attentivenessScore?: number }): void {

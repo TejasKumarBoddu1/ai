@@ -33,12 +33,17 @@ interface AnalysisData {
   confidenceScore: number;
   bodyLanguageScore: number;
   emotionalStabilityScore: number;
+  policyComplianceScore: number;
   strengths: string[];
   weaknesses: string[];
   coachingTips: string[];
   hiringRecommendation: 'Strong' | 'Moderate' | 'Low';
   processingTime: number;
   detailedAnalysis: {
+    policyViolations: {
+      phoneDetections: number;
+      multiplePeopleDetections: number;
+    };
     emotionAnalysis: {
       neutral: number;
       happy: number;
@@ -228,7 +233,8 @@ const PostInterviewAnalysis: React.FC = () => {
       eyeContactQuality: session.behaviorAnalysis.length > 0 ? 
         session.behaviorAnalysis.filter(b => b.eyeContact).length / session.behaviorAnalysis.length > 0.8 ? 'Excellent' : 
         session.behaviorAnalysis.filter(b => b.eyeContact).length / session.behaviorAnalysis.length > 0.6 ? 'Good' : 'Poor' : 'Unknown',
-      breaksInEyeContact: session.behaviorAnalysis.reduce((sum, b) => sum + b.notFacingCounter, 0),
+      // Use the maximum recorded breaks counter rather than summing per-frame samples
+      breaksInEyeContact: session.behaviorAnalysis.reduce((max, b) => Math.max(max, b.notFacingCounter), 0),
       totalTimeLookingAway: session.behaviorAnalysis.reduce((sum, b) => sum + b.notFacingDuration, 0),
       handPositioning: session.behaviorAnalysis.filter(b => !b.handPresence).length < session.behaviorAnalysis.length * 0.2 ? 'Optimal' : 'Needs Improvement',
       postureQuality: session.behaviorAnalysis.filter(b => b.posture === 'good').length / session.behaviorAnalysis.length > 0.7 ? 'Professional' : 'Needs Improvement',
@@ -270,11 +276,18 @@ const PostInterviewAnalysis: React.FC = () => {
       (100 - emotionAnalysis.angry * 2 - emotionAnalysis.fearful * 2) * 0.2
     ));
 
+    // Policy compliance based on violations
+    const phoneDetections = session.phoneWarningCount || 0;
+    const multiplePeopleDetections = session.multiplePeopleWarningCount || 0;
+    const totalViolations = phoneDetections + multiplePeopleDetections;
+    const policyComplianceScore = Math.max(0, 100 - (phoneDetections * 15 + multiplePeopleDetections * 20));
+
     const overallScore = Math.round(
-      (communicationScore * 0.3) +
-      (confidenceScore * 0.25) +
-      (bodyLanguageScore * 0.25) +
-      (emotionalStabilityScore * 0.2)
+      (communicationScore * 0.28) +
+      (confidenceScore * 0.22) +
+      (bodyLanguageScore * 0.22) +
+      (emotionalStabilityScore * 0.18) +
+      (policyComplianceScore * 0.10)
     );
 
     // Generate strengths and weaknesses
@@ -320,12 +333,17 @@ const PostInterviewAnalysis: React.FC = () => {
       confidenceScore: Math.round(confidenceScore),
       bodyLanguageScore: Math.round(bodyLanguageScore),
       emotionalStabilityScore: Math.round(emotionalStabilityScore),
+      policyComplianceScore: Math.round(policyComplianceScore),
       strengths: strengths.length > 0 ? strengths : ["Shows potential for growth"],
       weaknesses: weaknesses.length > 0 ? weaknesses : ["No major weaknesses identified"],
       coachingTips: coachingTips.length > 0 ? coachingTips : ["Continue practicing interview skills"],
       hiringRecommendation,
       processingTime: Math.round(processingTime),
       detailedAnalysis: {
+        policyViolations: {
+          phoneDetections,
+          multiplePeopleDetections,
+        },
         emotionAnalysis,
         behaviorAnalysis,
         communicationAnalysis,
@@ -415,7 +433,7 @@ const PostInterviewAnalysis: React.FC = () => {
               <div>
                 <CardTitle className="text-2xl font-bold">Overall Performance Score</CardTitle>
                 <CardDescription>
-                  Comprehensive evaluation based on communication, confidence, body language, and emotional stability
+                  Comprehensive evaluation based on communication, confidence, body language, emotional stability, and policy compliance
                 </CardDescription>
               </div>
               <div className="text-right">
@@ -525,6 +543,29 @@ const PostInterviewAnalysis: React.FC = () => {
 
           <TabsContent value="detailed" className="space-y-6">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Policy Violations */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>Policy Violations</CardTitle>
+                  <CardDescription>Detected during the interview</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm">Phone Detections</span>
+                      <Badge variant="destructive">{analysisData.detailedAnalysis.policyViolations.phoneDetections}</Badge>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm">Multiple People Detections</span>
+                      <Badge variant="destructive">{analysisData.detailedAnalysis.policyViolations.multiplePeopleDetections}</Badge>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm">Policy Compliance Score</span>
+                      <Badge>{analysisData.policyComplianceScore}</Badge>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
               {/* Emotion Analysis */}
               <Card>
                 <CardHeader>
