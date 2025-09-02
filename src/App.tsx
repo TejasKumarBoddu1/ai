@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { HashRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Toaster } from "@/components/ui/toaster";
 import { AuthProvider } from "@/context/AuthContext";
 import { BlockchainProvider } from "@/context/BlockchainContext";
@@ -82,7 +82,7 @@ function App() {
 
   return (
     <div className="App">
-      <BrowserRouter>
+      <HashRouter>
         <AuthProvider>
           <BlockchainProvider>
             <RoleBasedRedirect>
@@ -316,20 +316,12 @@ function App() {
                 
                 <Route 
                   path="/ai-interview-coach" 
-                  element={
-                    <ProtectedRoute>
-                      <AIInterviewCoach />
-                    </ProtectedRoute>
-                  } 
+                  element={<AIInterviewCoach />} 
                 />
                 
                 <Route 
                   path="/post-interview-analysis" 
-                  element={
-                    <ProtectedRoute>
-                      <PostInterviewAnalysis />
-                    </ProtectedRoute>
-                  } 
+                  element={<PostInterviewAnalysis />} 
                 />
                 
                 <Route 
@@ -470,7 +462,7 @@ function App() {
             </RoleBasedRedirect>
           </BlockchainProvider>
         </AuthProvider>
-      </BrowserRouter>
+      </HashRouter>
     </div>
   );
 }
